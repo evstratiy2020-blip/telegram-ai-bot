@@ -27,6 +27,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
+    MenuButtonWebApp,
     Message,
     ReplyKeyboardMarkup,
     WebAppInfo,
@@ -131,6 +132,8 @@ def main_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton(text="🎙 Голос"), KeyboardButton(text="🔇 Молчать")],
     ]
+    if MINIAPP_URL:
+        keyboard.append([KeyboardButton(text="🚀 Открыть Боню", web_app=WebAppInfo(url=MINIAPP_URL))])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
@@ -604,6 +607,13 @@ def run_webhook() -> None:
 
     async def on_startup(_: web.Application) -> None:
         await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=False)
+        if MINIAPP_URL:
+            try:
+                await bot.set_chat_menu_button(
+                    menu_button=MenuButtonWebApp(text="Боня", web_app=WebAppInfo(url=MINIAPP_URL))
+                )
+            except Exception:
+                pass
         asyncio.create_task(self_ping())
 
     app.on_startup.append(on_startup)
