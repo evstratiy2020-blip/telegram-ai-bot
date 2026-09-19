@@ -61,9 +61,8 @@ if (loginBtn) loginBtn.addEventListener('click', doLogin);
 if (passwordEl) passwordEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
 
 async function checkAuth() {
-  if (initData) { hideLogin(); return; }
   try {
-    var r = await fetch('/api/me');
+    var r = await fetch('/api/me', { headers: initData ? { 'X-Init-Data': initData } : {} });
     if (r.ok) hideLogin(); else showLogin();
   } catch (e) { showLogin(); }
 }
