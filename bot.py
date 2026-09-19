@@ -394,7 +394,7 @@ def run_webhook() -> None:
             return
         url = RENDER_URL.rstrip("/") + "/"
         while True:
-            await asyncio.sleep(600)
+            await asyncio.sleep(300)
             try:
                 async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
                     await client.get(url)
