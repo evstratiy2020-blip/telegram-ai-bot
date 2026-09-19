@@ -67,14 +67,9 @@ FFMPEG = os.getenv("FFMPEG_PATH", "ffmpeg")
 FLANGER = "flanger=delay=8:depth=3:regen=0.2:width=71:speed=0.5"
 
 VOICE_PRESETS = {
-    "1": ("железный", "ru-RU-DmitryNeural", "-20%", "-40Hz", FLANGER),
-    "2": ("эхо", "ru-RU-DmitryNeural", "-20%", "-30Hz", "aecho=0.8:0.8:60:0.3"),
-    "3": ("космический", "ru-RU-DmitryNeural", "-20%", "-20Hz", "aphaser=in_gain=0.4:out_gain=0.74:delay=3:decay=0.4:speed=0.5:type=triangular"),
-    "4": ("механический", "ru-RU-DmitryNeural", "-20%", "-30Hz", "tremolo=f=8:d=0.8"),
-    "5": ("цифровой", "ru-RU-DmitryNeural", "-20%", "-20Hz", "acrusher=level_in=1:level_out=1:bits=8:mode=log:aa=1"),
-    "6": ("рация", "ru-RU-DmitryNeural", "-20%", "-10Hz", "highpass=f=300,lowpass=f=3000"),
-    "7": ("женский", "ru-RU-SvetlanaNeural", "-20%", "-10Hz", FLANGER),
-    "8": ("лилипут", "ru-RU-DmitryNeural", "-20%", "+80Hz", FLANGER),
+    "1": ("лилипут", "ru-RU-DmitryNeural", "-20%", "+80Hz", FLANGER),
+    "2": ("робот", "ru-RU-DmitryNeural", "-20%", "-50Hz", "tremolo=f=6:d=0.9"),
+    "3": ("мультик", "ru-RU-SvetlanaNeural", "-20%", "+50Hz", FLANGER),
 }
 DEFAULT_PRESET = "1"
 
