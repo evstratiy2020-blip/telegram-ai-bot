@@ -6,6 +6,10 @@ services:
     region: frankfurt
     healthCheckPath: /
     autoDeployTrigger: commit
+    buildFilter:
+      ignoredPaths:
+        - .github/**
+        - .keepalive
     envVars:
       - key: BOT_TOKEN
         sync: false
