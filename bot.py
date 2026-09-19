@@ -64,6 +64,12 @@ SYSTEM_PROMPT = (
 
 FFMPEG = os.getenv("FFMPEG_PATH", "ffmpeg")
 
+ABOUT_TEXT = (
+    "Я Боня-Navigator, железный робот-помощник. 🤖\n"
+    "Умею: отвечать на вопросы, помнить наш диалог и говорить голосом.\n\n"
+    "Выбери мне голос кнопкой 🎙 и просто поговори со мной."
+)
+
 FLANGER = "flanger=delay=8:depth=3:regen=0.2:width=71:speed=0.5"
 
 VOICE_PRESETS = {
@@ -116,8 +122,8 @@ def voice_keyboard() -> InlineKeyboardMarkup:
 
 def main_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton(text="🎙 Голос"), KeyboardButton(text="🖼 Картинка")],
-        [KeyboardButton(text="🤖 Кто ты?"), KeyboardButton(text="🔇 Молчать")],
+        [KeyboardButton(text="🎙 Голос"), KeyboardButton(text="🤖 Кто ты?")],
+        [KeyboardButton(text="🔇 Молчать")],
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -260,13 +266,7 @@ async def draw_image(message: Message, prompt: str) -> None:
 
 @dp.message(CommandStart())
 async def start(message: Message) -> None:
-    await message.answer(
-        "Привет! Я ИИ-ассистент (модель: {model}).\n"
-        "Просто напиши сообщение — отвечу.\n\n"
-        "Кнопки меню — под полем ввода:\n"
-        "🎙 голос, 🖼 картинки, 🧠 память и др.".format(model=LLM_MODEL),
-        reply_markup=main_keyboard(),
-    )
+    await message.answer(ABOUT_TEXT, reply_markup=main_keyboard())
 
 
 @dp.message(Command("voice"))
@@ -308,11 +308,7 @@ async def kb_new(message: Message) -> None:
 
 @dp.message(F.text == "🤖 Кто ты?")
 async def kb_about(message: Message) -> None:
-    await message.answer(
-        "Я — Navigator, железный робот-помощник. 🤖\n"
-        "Умею: отвечать на вопросы, помнить наш диалог и говорить голосом.\n\n"
-        "Выбери мне голос кнопкой 🎙 и просто поговори со мной."
-    )
+    await message.answer(ABOUT_TEXT)
 
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("voice:"))
