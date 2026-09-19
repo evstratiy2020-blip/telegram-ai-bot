@@ -1,0 +1,14 @@
+.venv
+__pycache__
+*.pyc
+*.log
+*.err
+.env
+.git
+.gitignore
+deploy_hf.py
+run.bat
+run_watchdog.bat
+start_hidden.vbs
+bot.log
+bot.log.err
