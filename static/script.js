@@ -10,6 +10,11 @@ var singBtn = document.getElementById('singBtn');
 var tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
 var initData = (tg && tg.initData) ? tg.initData : '';
+var appKey = '';
+try {
+  var m = location.search.match(/[?&]k=([^&]+)/);
+  if (m) appKey = decodeURIComponent(m[1]);
+} catch (e) {}
 
 var chatHistory = [];
 var soundOn = true;
@@ -62,7 +67,8 @@ if (passwordEl) passwordEl.addEventListener('keydown', function (e) { if (e.key 
 
 async function checkAuth() {
   try {
-    var r = await fetch('/api/me', { headers: initData ? { 'X-Init-Data': initData } : {} });
+    var h = initData ? { 'X-Init-Data': initData } : {};
+    var r = await fetch('/api/me' + (appKey ? '?k=' + encodeURIComponent(appKey) : ''), { headers: h });
     if (r.ok) { hideLogin(); return; }
     if (loginErr) loginErr.textContent = 'tg=' + (tg ? 'да' : 'нет') + ', initData=' + (initData ? initData.length : 0) + ', код ' + r.status;
     showLogin();
