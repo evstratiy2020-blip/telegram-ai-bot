@@ -389,8 +389,21 @@ def run_webhook() -> None:
     app.router.add_post("/api/chat", api_chat)
     app.router.add_post("/api/voice", api_voice)
 
+    async def self_ping() -> None:
+        if not RENDER_URL:
+            return
+        url = RENDER_URL.rstrip("/") + "/"
+        while True:
+            await asyncio.sleep(600)
+            try:
+                async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                    await client.get(url)
+            except Exception:
+                pass
+
     async def on_startup(_: web.Application) -> None:
         await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=False)
+        asyncio.create_task(self_ping())
 
     app.on_startup.append(on_startup)
 
