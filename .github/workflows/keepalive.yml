@@ -1,0 +1,25 @@
+name: keepalive
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ping bot
+        run: curl -fsS --max-time 60 https://navigator-bot-d18l.onrender.com/ || true
+      - name: Heartbeat (once per day)
+        run: |
+          date -u +%F > .keepalive
+          git config user.name "keepalive"
+          git config user.email "keepalive@users.noreply.github.com"
+          git add .keepalive
+          git diff --staged --quiet || git commit -m "keepalive $(date -u +%F)"
+          git push || true
