@@ -1,13 +1,16 @@
 import asyncio
+import hashlib
+import hmac
+import json
 import os
 import re
 import tempfile
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote
 
 import edge_tts
 import httpx
-from aiogram import Bot, Dispatcher, F
+from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BufferedInputFile,
@@ -25,6 +28,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_ID = int(os.getenv("OWNER_ID", "8768178048"))
 LLM_API_KEY = os.getenv("LLM_API_KEY")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
@@ -82,6 +86,23 @@ voice_settings: dict[int, str] = {}
 image_mode: set[int] = set()
 
 
+class OwnerOnlyMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user")
+        if OWNER_ID and (user is None or user.id != OWNER_ID):
+            if isinstance(event, Message):
+                try:
+                    await event.answer("Извини, это приватный бот.")
+                except Exception:
+                    pass
+            return None
+        return await handler(event, data)
+
+
+dp.message.outer_middleware(OwnerOnlyMiddleware())
+dp.callback_query.outer_middleware(OwnerOnlyMiddleware())
+
+
 def voice_keyboard() -> InlineKeyboardMarkup:
     rows = []
     items = list(VOICE_PRESETS.items())
@@ -118,6 +139,28 @@ def strip_markdown(text: str) -> str:
     text = re.sub(r"`(.+?)`", r"\1", text)
     text = re.sub(r"^#{1,6}\s*", "", text, flags=re.MULTILINE)
     return text
+
+
+def get_webapp_user_id(init_data: str) -> int | None:
+    if not init_data:
+        return None
+    try:
+        pairs = dict(parse_qsl(init_data, strict_parsing=True))
+    except Exception:
+        return None
+    received = pairs.pop("hash", None)
+    if not received:
+        return None
+    check_string = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
+    secret = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+    calc = hmac.new(secret, check_string.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(calc, received):
+        return None
+    try:
+        user = json.loads(pairs.get("user", "{}"))
+    except Exception:
+        return None
+    return user.get("id")
 
 
 async def ask_llm(messages: list[dict]) -> str:
@@ -347,6 +390,9 @@ def run_webhook() -> None:
         return web.FileResponse(STATIC_DIR / "index.html")
 
     async def api_chat(request: web.Request) -> web.Response:
+        uid = get_webapp_user_id(request.headers.get("X-Init-Data", ""))
+        if OWNER_ID and uid != OWNER_ID:
+            return web.json_response({"error": "forbidden"}, status=403)
         try:
             data = await request.json()
         except Exception:
@@ -362,6 +408,9 @@ def run_webhook() -> None:
             return web.json_response({"error": str(exc)}, status=500)
 
     async def api_voice(request: web.Request) -> web.Response:
+        uid = get_webapp_user_id(request.headers.get("X-Init-Data", ""))
+        if OWNER_ID and uid != OWNER_ID:
+            return web.json_response({"error": "forbidden"}, status=403)
         try:
             data = await request.json()
         except Exception:
