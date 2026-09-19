@@ -68,8 +68,6 @@ FLANGER = "flanger=delay=8:depth=3:regen=0.2:width=71:speed=0.5"
 
 VOICE_PRESETS = {
     "1": ("лилипут", "ru-RU-DmitryNeural", "-20%", "+80Hz", FLANGER),
-    "2": ("робот", "ru-RU-DmitryNeural", "-20%", "-50Hz", "tremolo=f=6:d=0.9"),
-    "3": ("мультик", "ru-RU-SvetlanaNeural", "-20%", "+50Hz", FLANGER),
 }
 DEFAULT_PRESET = "1"
 
@@ -120,10 +118,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton(text="🎙 Голос"), KeyboardButton(text="🖼 Картинка")],
         [KeyboardButton(text="🤖 Кто ты?"), KeyboardButton(text="🔇 Молчать")],
-        [KeyboardButton(text="🧠 Стереть память")],
     ]
-    if MINIAPP_URL:
-        keyboard.append([KeyboardButton(text="💬 Чат", web_app=WebAppInfo(url=MINIAPP_URL))])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
