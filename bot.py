@@ -1,0 +1,408 @@
+import asyncio
+import os
+import re
+import tempfile
+from pathlib import Path
+from urllib.parse import quote
+
+import edge_tts
+import httpx
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command, CommandStart
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+    WebAppInfo,
+)
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+LLM_API_KEY = os.getenv("LLM_API_KEY")
+LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
+LLM_URL = f"{LLM_BASE_URL}/chat/completions"
+
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
+WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
+PORT = int(os.getenv("PORT", "7860"))
+HOST = os.getenv("HOST", "0.0.0.0")
+
+MINIAPP_URL = os.getenv("MINIAPP_URL", "")
+STATIC_DIR = Path(__file__).parent / "static"
+
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "")
+if RENDER_URL:
+    if not WEBHOOK_URL:
+        WEBHOOK_URL = RENDER_URL + WEBHOOK_PATH
+    if not MINIAPP_URL:
+        MINIAPP_URL = RENDER_URL + "/app"
+
+SYSTEM_PROMPT = (
+    "Ты — полезный ИИ-ассистент в Telegram. "
+    "Отвечай на языке собеседника (по умолчанию на русском), "
+    "кратко, понятно и по делу. "
+    "Отвечай обычным текстом без markdown: не используй звёздочки (*, **), "
+    "решётки (#), нижние подчёркивания (_) и обратные кавычки (`)."
+)
+
+FFMPEG = os.getenv("FFMPEG_PATH", "ffmpeg")
+
+FLANGER = "flanger=delay=8:depth=3:regen=0.2:width=71:speed=0.5"
+
+VOICE_PRESETS = {
+    "1": ("железный", "ru-RU-DmitryNeural", "-20%", "-40Hz", FLANGER),
+    "2": ("эхо", "ru-RU-DmitryNeural", "-20%", "-30Hz", "aecho=0.8:0.8:60:0.3"),
+    "3": ("космический", "ru-RU-DmitryNeural", "-20%", "-20Hz", "aphaser=in_gain=0.4:out_gain=0.74:delay=3:decay=0.4:speed=0.5:type=triangular"),
+    "4": ("механический", "ru-RU-DmitryNeural", "-20%", "-30Hz", "tremolo=f=8:d=0.8"),
+    "5": ("цифровой", "ru-RU-DmitryNeural", "-20%", "-20Hz", "acrusher=level_in=1:level_out=1:bits=8:mode=log:aa=1"),
+    "6": ("рация", "ru-RU-DmitryNeural", "-20%", "-10Hz", "highpass=f=300,lowpass=f=3000"),
+    "7": ("женский", "ru-RU-SvetlanaNeural", "-20%", "-10Hz", FLANGER),
+    "8": ("лилипут", "ru-RU-DmitryNeural", "-20%", "+80Hz", FLANGER),
+}
+DEFAULT_PRESET = "1"
+
+IMAGE_URL = "https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&enhance=true&nologo=true"
+
+HISTORY_LIMIT = 20
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+history: dict[int, list[dict]] = {}
+voice_enabled: set[int] = set()
+voice_settings: dict[int, str] = {}
+image_mode: set[int] = set()
+
+
+def voice_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    items = list(VOICE_PRESETS.items())
+    for i in range(0, len(items), 2):
+        row = [
+            InlineKeyboardButton(text=name, callback_data=f"voice:{key}")
+            for key, (name, *_rest) in items[i:i + 2]
+        ]
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="🔇 Выключить голос", callback_data="voice:off")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def main_keyboard() -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton(text="🎙 Голос"), KeyboardButton(text="🖼 Картинка")],
+        [KeyboardButton(text="🤖 Кто ты?"), KeyboardButton(text="🔇 Молчать")],
+        [KeyboardButton(text="🧠 Стереть память")],
+    ]
+    if MINIAPP_URL:
+        keyboard.append([KeyboardButton(text="💬 Чат", web_app=WebAppInfo(url=MINIAPP_URL))])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def get_history(uid: int) -> list[dict]:
+    return history.setdefault(uid, [])
+
+
+def strip_markdown(text: str) -> str:
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"\*(.+?)\*", r"\1", text)
+    text = re.sub(r"__(.+?)__", r"\1", text)
+    text = re.sub(r"_(.+?)_", r"\1", text)
+    text = re.sub(r"`(.+?)`", r"\1", text)
+    text = re.sub(r"^#{1,6}\s*", "", text, flags=re.MULTILINE)
+    return text
+
+
+async def ask_llm(messages: list[dict]) -> str:
+    payload = {
+        "model": LLM_MODEL,
+        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+        "stream": False,
+    }
+    headers = {"Authorization": f"Bearer {LLM_API_KEY}"}
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(LLM_URL, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    return data["choices"][0]["message"]["content"].strip()
+
+
+async def generate_voice(text: str, out_path: str, voice: str, rate: str, pitch: str, audio_filter: str) -> None:
+    mp3_path = out_path + ".mp3"
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+    await communicate.save(mp3_path)
+
+    cmd = [
+        FFMPEG, "-y", "-i", mp3_path,
+        "-af", audio_filter,
+        "-c:a", "libopus", "-b:a", "64k",
+        out_path,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+    if os.path.exists(mp3_path):
+        os.remove(mp3_path)
+
+
+async def image_prompt_to_english(prompt: str) -> str:
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a photorealistic image prompt generator. Convert the user's request "
+                "into a concise, vivid English prompt for a photorealistic image. "
+                "Include keywords like 'photorealistic, ultra realistic, highly detailed, "
+                "8k, professional photography, natural lighting'. "
+                "Return only the English prompt text, nothing else."
+            ),
+        },
+        {"role": "user", "content": prompt},
+    ]
+    payload = {"model": LLM_MODEL, "messages": messages, "stream": False}
+    headers = {"Authorization": f"Bearer {LLM_API_KEY}"}
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(LLM_URL, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    return data["choices"][0]["message"]["content"].strip()
+
+
+async def generate_image(prompt: str) -> bytes:
+    en_prompt = await image_prompt_to_english(prompt)
+    url = IMAGE_URL.format(prompt=quote(en_prompt))
+    async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.content
+
+
+async def draw_image(message: Message, prompt: str) -> None:
+    sent = await message.answer("🎨 Рисую...")
+    try:
+        img = await generate_image(prompt)
+        await message.answer_photo(BufferedInputFile(img, filename="image.jpg"), caption=f"🎨 {prompt}")
+        await sent.delete()
+    except Exception as exc:
+        await sent.edit_text(f"Не получилось нарисовать: {exc}")
+
+
+@dp.message(CommandStart())
+async def start(message: Message) -> None:
+    await message.answer(
+        "Привет! Я ИИ-ассистент (модель: {model}).\n"
+        "Просто напиши сообщение — отвечу.\n\n"
+        "Кнопки меню — под полем ввода:\n"
+        "🎙 голос, 🖼 картинки, 🧠 память и др.".format(model=LLM_MODEL),
+        reply_markup=main_keyboard(),
+    )
+
+
+@dp.message(Command("voice"))
+async def voice_menu(message: Message) -> None:
+    await message.answer("Выбери голос робота:", reply_markup=voice_keyboard())
+
+
+@dp.message(Command("img"))
+async def img_command(message: Message) -> None:
+    prompt = (message.text or "")[len("/img"):].strip()
+    if not prompt:
+        await message.answer("Напиши: /img описание картинки\nНапример: /img закат над морем")
+        return
+    await draw_image(message, prompt)
+
+
+@dp.message(F.text == "🎙 Голос")
+async def kb_voice(message: Message) -> None:
+    await message.answer("Выбери голос робота:", reply_markup=voice_keyboard())
+
+
+@dp.message(F.text == "🖼 Картинка")
+async def kb_image(message: Message) -> None:
+    image_mode.add(message.from_user.id)
+    await message.answer("Включил режим рисования. Напиши, что нарисовать (или сразу /img описание).")
+
+
+@dp.message(F.text == "🔇 Молчать")
+async def kb_voice_off(message: Message) -> None:
+    voice_enabled.discard(message.from_user.id)
+    await message.answer("Молчу. Буду отвечать только текстом. 🤐")
+
+
+@dp.message(F.text == "🧠 Стереть память")
+async def kb_new(message: Message) -> None:
+    history.pop(message.from_user.id, None)
+    await message.answer("Память стёрта. Начинаем с чистого листа. 🧹")
+
+
+@dp.message(F.text == "🤖 Кто ты?")
+async def kb_about(message: Message) -> None:
+    await message.answer(
+        "Я — Navigator, железный робот-помощник. 🤖\n"
+        "Умею: отвечать на вопросы, помнить наш диалог и говорить голосом.\n\n"
+        "Выбери мне голос кнопкой 🎙 и просто поговори со мной."
+    )
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("voice:"))
+async def voice_callback(cq: CallbackQuery) -> None:
+    uid = cq.from_user.id
+    action = cq.data.split(":", 1)[1]
+    if action == "off":
+        voice_enabled.discard(uid)
+        await cq.message.edit_text("Голос выключен.", reply_markup=voice_keyboard())
+    elif action in VOICE_PRESETS:
+        voice_settings[uid] = action
+        voice_enabled.add(uid)
+        name, voice, rate, pitch, audio_filter = VOICE_PRESETS[action]
+        await cq.message.edit_text(
+            f"Выбран голос: {name}. Слушай пример ниже:",
+            reply_markup=voice_keyboard(),
+        )
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+                audio_path = f.name
+            await generate_voice("Привет! Это мой голос.", audio_path, voice, rate, pitch, audio_filter)
+            await cq.message.answer_voice(FSInputFile(audio_path))
+            os.remove(audio_path)
+        except Exception:
+            pass
+    await cq.answer()
+
+
+@dp.message(Command("new"))
+async def clear_history(message: Message) -> None:
+    history.pop(message.from_user.id, None)
+    await message.answer("История диалога очищена.")
+
+
+@dp.message()
+async def chat(message: Message) -> None:
+    uid = message.from_user.id
+    if uid in image_mode:
+        image_mode.discard(uid)
+        prompt = (message.text or "").strip()
+        if prompt:
+            await draw_image(message, prompt)
+            return
+    hist = get_history(uid)
+    hist.append({"role": "user", "content": message.text or ""})
+    hist = hist[-HISTORY_LIMIT:]
+    history[uid] = hist
+
+    sent = await message.answer("Думаю...")
+
+    try:
+        reply = await ask_llm(hist)
+        if not reply:
+            reply = "(пустой ответ от модели)"
+        reply = strip_markdown(reply)
+
+        await sent.edit_text(reply)
+        hist.append({"role": "assistant", "content": reply})
+        history[uid] = hist[-HISTORY_LIMIT:]
+
+        if uid in voice_enabled:
+            try:
+                key = voice_settings.get(uid, DEFAULT_PRESET)
+                _name, voice, rate, pitch, audio_filter = VOICE_PRESETS[key]
+                with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+                    audio_path = f.name
+                await generate_voice(reply, audio_path, voice, rate, pitch, audio_filter)
+                await message.answer_voice(FSInputFile(audio_path))
+                os.remove(audio_path)
+            except Exception:
+                pass
+    except httpx.HTTPStatusError as exc:
+        await sent.edit_text(f"Ошибка API ({exc.response.status_code}): {exc.response.text[:200]}")
+    except Exception as exc:
+        await sent.edit_text(f"Ошибка: {exc}")
+
+
+async def run_polling() -> None:
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+
+def run_webhook() -> None:
+    from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+    from aiohttp import web
+
+    app = web.Application()
+
+    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
+    setup_application(app, dp, bot=bot)
+
+    async def serve_app(_: web.Request) -> web.Response:
+        return web.FileResponse(STATIC_DIR / "index.html")
+
+    async def api_chat(request: web.Request) -> web.Response:
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "bad json"}, status=400)
+        messages = data.get("messages", []) if isinstance(data, dict) else []
+        if not messages:
+            return web.json_response({"error": "no messages"}, status=400)
+        try:
+            reply = await ask_llm(messages[-HISTORY_LIMIT:])
+            reply = strip_markdown(reply or "")
+            return web.json_response({"reply": reply})
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+
+    async def api_voice(request: web.Request) -> web.Response:
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "bad json"}, status=400)
+        text = (data.get("text") or "").strip()
+        preset = data.get("voice") or DEFAULT_PRESET
+        if preset not in VOICE_PRESETS:
+            preset = DEFAULT_PRESET
+        _name, voice, rate, pitch, audio_filter = VOICE_PRESETS[preset]
+        fd, path = tempfile.mkstemp(suffix=".ogg")
+        os.close(fd)
+        try:
+            await generate_voice(text, path, voice, rate, pitch, audio_filter)
+            with open(path, "rb") as fh:
+                audio = fh.read()
+            return web.Response(body=audio, content_type="audio/ogg")
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
+    app.router.add_get("/", serve_app)
+    app.router.add_get("/app", serve_app)
+    app.router.add_post("/api/chat", api_chat)
+    app.router.add_post("/api/voice", api_voice)
+
+    async def on_startup(_: web.Application) -> None:
+        await bot.set_webhook(WEBHOOK_URL)
+
+    async def on_shutdown(_: web.Application) -> None:
+        await bot.delete_webhook()
+
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+
+    web.run_app(app, host=HOST, port=PORT)
+
+
+if __name__ == "__main__":
+    if WEBHOOK_URL:
+        run_webhook()
+    else:
+        asyncio.run(run_polling())
