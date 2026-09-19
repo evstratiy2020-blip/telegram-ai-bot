@@ -93,6 +93,19 @@
     cursor: pointer;
   }
   #send:disabled { opacity: .5; }
+  #login {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; padding: 24px; z-index: 10;
+  }
+  #login.hidden { display: none; }
+  #login .big { font-size: 40px; }
+  #login input { max-width: 320px; width: 100%; }
+  #login button {
+    background: var(--accent); border: none; border-radius: 12px;
+    color: var(--accent-text); padding: 12px 22px; font-size: 16px; cursor: pointer;
+  }
+  #login .err { color: #ff6b6b; min-height: 18px; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -115,6 +128,13 @@
     <input id="input" type="text" placeholder="Напиши сообщение…" autocomplete="off">
     <button id="send">➤</button>
   </footer>
+  <div id="login" class="hidden">
+    <span class="big">🤖</span>
+    <span class="title">Navigator</span>
+    <input id="password" type="password" placeholder="Введи пароль" autocomplete="current-password">
+    <button id="loginBtn">Войти</button>
+    <div class="err" id="loginErr"></div>
+  </div>
   <script>
     var tg = window.Telegram && window.Telegram.WebApp;
     if (tg) {
@@ -137,6 +157,36 @@
     var voiceSelect = document.getElementById('voice');
     var history = [];
     var initData = (tg && tg.initData) ? tg.initData : '';
+    var loginEl = document.getElementById('login');
+    var passwordEl = document.getElementById('password');
+    var loginBtn = document.getElementById('loginBtn');
+    var loginErr = document.getElementById('loginErr');
+
+    if (!initData) {
+      loginEl.classList.remove('hidden');
+    }
+
+    async function doLogin() {
+      loginErr.textContent = '';
+      try {
+        var r = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: passwordEl.value })
+        });
+        if (r.ok) {
+          loginEl.classList.add('hidden');
+          passwordEl.value = '';
+          input.focus();
+        } else {
+          loginErr.textContent = 'Неверный пароль';
+        }
+      } catch (e) {
+        loginErr.textContent = 'Ошибка сети';
+      }
+    }
+    loginBtn.addEventListener('click', doLogin);
+    passwordEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
 
     function addMessage(text, who) {
       var el = document.createElement('div');
