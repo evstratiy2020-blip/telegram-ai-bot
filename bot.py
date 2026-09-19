@@ -47,7 +47,7 @@ if RENDER_URL:
     if not WEBHOOK_URL:
         WEBHOOK_URL = RENDER_URL + WEBHOOK_PATH
     if not MINIAPP_URL:
-        MINIAPP_URL = RENDER_URL + "/app"
+        MINIAPP_URL = RENDER_URL + "/app?v=2"
 
 SYSTEM_PROMPT = (
     "Ты — полезный ИИ-ассистент в Telegram. "
@@ -387,7 +387,10 @@ def run_webhook() -> None:
     setup_application(app, dp, bot=bot)
 
     async def serve_app(_: web.Request) -> web.Response:
-        return web.FileResponse(STATIC_DIR / "index.html")
+        return web.FileResponse(
+            STATIC_DIR / "index.html",
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
 
     async def api_chat(request: web.Request) -> web.Response:
         uid = get_webapp_user_id(request.headers.get("X-Init-Data", ""))
