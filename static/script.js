@@ -63,8 +63,13 @@ if (passwordEl) passwordEl.addEventListener('keydown', function (e) { if (e.key 
 async function checkAuth() {
   try {
     var r = await fetch('/api/me', { headers: initData ? { 'X-Init-Data': initData } : {} });
-    if (r.ok) hideLogin(); else showLogin();
-  } catch (e) { showLogin(); }
+    if (r.ok) { hideLogin(); return; }
+    if (loginErr) loginErr.textContent = 'tg=' + (tg ? 'да' : 'нет') + ', initData=' + (initData ? initData.length : 0) + ', код ' + r.status;
+    showLogin();
+  } catch (e) {
+    if (loginErr) loginErr.textContent = 'ошибка сети: ' + e;
+    showLogin();
+  }
 }
 
 /* ---------- Звук/аватар ---------- */
