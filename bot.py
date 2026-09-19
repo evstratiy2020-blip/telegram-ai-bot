@@ -390,13 +390,9 @@ def run_webhook() -> None:
     app.router.add_post("/api/voice", api_voice)
 
     async def on_startup(_: web.Application) -> None:
-        await bot.set_webhook(WEBHOOK_URL)
-
-    async def on_shutdown(_: web.Application) -> None:
-        await bot.delete_webhook()
+        await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=False)
 
     app.on_startup.append(on_startup)
-    app.on_shutdown.append(on_shutdown)
 
     web.run_app(app, host=HOST, port=PORT)
 
