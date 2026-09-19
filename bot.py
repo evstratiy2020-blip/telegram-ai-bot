@@ -11,6 +11,13 @@ from urllib.parse import parse_qsl, quote
 
 import edge_tts
 import httpx
+
+try:
+    import parselmouth
+    from parselmouth.praat import call as praat_call
+except Exception:  # noqa: BLE001
+    parselmouth = None
+    praat_call = None
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
@@ -219,6 +226,53 @@ async def generate_voice(text: str, out_path: str, voice: str, rate: str, pitch:
     await proc.wait()
     if os.path.exists(mp3_path):
         os.remove(mp3_path)
+
+
+async def _ffmpeg(args: list[str]) -> None:
+    proc = await asyncio.create_subprocess_exec(
+        FFMPEG, "-y", *args,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+
+
+async def generate_voice_mp3(text: str, out_path: str, voice: str, rate: str, pitch: str, audio_filter: str) -> None:
+    src = out_path + ".src.mp3"
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+    await communicate.save(src)
+    await _ffmpeg(["-i", src, "-af", audio_filter, "-c:a", "libmp3lame", "-b:a", "96k", out_path])
+    if os.path.exists(src):
+        os.remove(src)
+
+
+SING_SCALE = [185, 208, 233, 247, 277, 311, 277, 247, 233, 208]
+
+
+async def generate_sing_mp3(text: str, out_path: str, voice: str, pitch: str, audio_filter: str) -> None:
+    if parselmouth is None:
+        raise RuntimeError("parselmouth unavailable")
+    src = out_path + ".src.mp3"
+    wav = out_path + ".src.wav"
+    sang = out_path + ".sang.wav"
+    communicate = edge_tts.Communicate(text, voice, rate="-15%", pitch=pitch)
+    await communicate.save(src)
+    await _ffmpeg(["-i", src, "-ac", "1", "-ar", "44100", wav])
+    snd = parselmouth.Sound(wav)
+    duration = snd.get_total_duration()
+    manipulation = praat_call(snd, "To Manipulation", 0.01, 60, 600)
+    pitch_tier = praat_call("Create PitchTier", "melody", 0.0, duration)
+    n = max(4, int(duration / 0.32))
+    step = duration / n
+    for i in range(n):
+        praat_call(pitch_tier, "Add point", i * step + step * 0.5, float(SING_SCALE[i % len(SING_SCALE)]))
+    praat_call([manipulation, pitch_tier], "Replace pitch tier")
+    resynth = praat_call(manipulation, "Get resynthesis (overlap-add)")
+    resynth.save(sang, "WAV")
+    await _ffmpeg(["-i", sang, "-af", audio_filter, "-c:a", "libmp3lame", "-b:a", "128k", out_path])
+    for p in (src, wav, sang):
+        if os.path.exists(p):
+            os.remove(p)
 
 
 async def image_prompt_to_english(prompt: str) -> str:
@@ -470,11 +524,71 @@ def run_webhook() -> None:
         )
         return resp
 
+    async def api_voice_get(request: web.Request) -> web.Response:
+        if not is_authorized(request):
+            return web.json_response({"error": "forbidden"}, status=403)
+        text = (request.query.get("text") or "").strip()[:600]
+        if not text:
+            return web.json_response({"error": "no text"}, status=400)
+        _name, voice, rate, pitch, audio_filter = VOICE_PRESETS[DEFAULT_PRESET]
+        fd, path = tempfile.mkstemp(suffix=".mp3")
+        os.close(fd)
+        try:
+            await generate_voice_mp3(text, path, voice, rate, pitch, audio_filter)
+            with open(path, "rb") as fh:
+                audio = fh.read()
+            return web.Response(body=audio, content_type="audio/mpeg")
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
+    async def api_sing_get(request: web.Request) -> web.Response:
+        if not is_authorized(request):
+            return web.json_response({"error": "forbidden"}, status=403)
+        text = (request.query.get("text") or "").strip()[:300]
+        if not text:
+            return web.json_response({"error": "no text"}, status=400)
+        _name, voice, _rate, pitch, audio_filter = VOICE_PRESETS[DEFAULT_PRESET]
+        fd, path = tempfile.mkstemp(suffix=".mp3")
+        os.close(fd)
+        try:
+            await generate_sing_mp3(text, path, voice, pitch, audio_filter)
+            with open(path, "rb") as fh:
+                audio = fh.read()
+            return web.Response(body=audio, content_type="audio/mpeg")
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
+    async def api_me(request: web.Request) -> web.Response:
+        if is_authorized(request):
+            return web.json_response({"ok": True})
+        return web.json_response({"ok": False}, status=401)
+
+    async def serve_static(request: web.Request) -> web.Response:
+        rel = request.match_info.get("path", "")
+        target = (STATIC_DIR / rel).resolve()
+        try:
+            target.relative_to(STATIC_DIR.resolve())
+        except ValueError:
+            raise web.HTTPNotFound()
+        if target.is_file():
+            return web.FileResponse(target, headers={"Cache-Control": "no-store"})
+        raise web.HTTPNotFound()
+
     app.router.add_get("/", serve_app)
     app.router.add_get("/app", serve_app)
     app.router.add_post("/api/chat", api_chat)
     app.router.add_post("/api/voice", api_voice)
     app.router.add_post("/api/login", api_login)
+    app.router.add_get("/api/voice", api_voice_get)
+    app.router.add_get("/api/sing", api_sing_get)
+    app.router.add_get("/api/me", api_me)
+    app.router.add_get("/{path:.*}", serve_static)
 
     async def self_ping() -> None:
         if not RENDER_URL:
