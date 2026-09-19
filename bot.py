@@ -27,6 +27,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
+    MenuButtonDefault,
     MenuButtonWebApp,
     Message,
     ReplyKeyboardMarkup,
@@ -621,9 +622,7 @@ def run_webhook() -> None:
         await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=False)
         if MINIAPP_URL:
             try:
-                await bot.set_chat_menu_button(
-                    menu_button=MenuButtonWebApp(text="Боня", web_app=WebAppInfo(url=MINIAPP_URL))
-                )
+                await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
             except Exception:
                 pass
         asyncio.create_task(self_ping())
