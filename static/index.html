@@ -191,6 +191,8 @@
         if (data.reply) {
           addMessage(data.reply, 'bot');
           history.push({ role: 'assistant', content: data.reply });
+        } else if (resp.status === 403) {
+          addMessage('Нет доступа. Открой этот чат через кнопку «💬 Чат» в боте.', 'bot');
         } else {
           addMessage(data.error || 'Ошибка', 'bot');
         }
