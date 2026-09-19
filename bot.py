@@ -122,8 +122,7 @@ def voice_keyboard() -> InlineKeyboardMarkup:
 
 def main_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton(text="🎙 Голос"), KeyboardButton(text="🤖 Кто ты?")],
-        [KeyboardButton(text="🔇 Молчать")],
+        [KeyboardButton(text="🎙 Голос"), KeyboardButton(text="🔇 Молчать")],
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -271,7 +270,9 @@ async def start(message: Message) -> None:
 
 @dp.message(Command("voice"))
 async def voice_menu(message: Message) -> None:
-    await message.answer("Выбери голос робота:", reply_markup=voice_keyboard())
+    voice_settings[message.from_user.id] = DEFAULT_PRESET
+    voice_enabled.add(message.from_user.id)
+    await message.answer("Включил голос. Теперь отвечаю голосом. 🎙")
 
 
 @dp.message(Command("img"))
@@ -285,7 +286,9 @@ async def img_command(message: Message) -> None:
 
 @dp.message(F.text == "🎙 Голос")
 async def kb_voice(message: Message) -> None:
-    await message.answer("Выбери голос робота:", reply_markup=voice_keyboard())
+    voice_settings[message.from_user.id] = DEFAULT_PRESET
+    voice_enabled.add(message.from_user.id)
+    await message.answer("Включил голос. Теперь отвечаю голосом. 🎙")
 
 
 @dp.message(F.text == "🖼 Картинка")
