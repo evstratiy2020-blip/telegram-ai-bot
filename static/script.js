@@ -1,0 +1,244 @@
+// Сайт Бони: настоящий ИИ + голос Бони + пение. Доступ: Telegram или пароль.
+
+var messages = document.getElementById('messages');
+var input = document.getElementById('input');
+var send = document.getElementById('send');
+var voiceBtn = document.getElementById('voiceBtn');
+var soundBtn = document.getElementById('soundBtn');
+var singBtn = document.getElementById('singBtn');
+
+var tg = window.Telegram && window.Telegram.WebApp;
+if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
+var initData = (tg && tg.initData) ? tg.initData : '';
+
+var chatHistory = [];
+var soundOn = true;
+var busy = false;
+var unlocked = false;
+var currentAudio = null;
+
+var dbgEl = document.getElementById('dbg');
+function dbg(msg) { if (dbgEl) dbgEl.textContent = msg; }
+
+function authHeaders() {
+  var h = { 'Content-Type': 'application/json' };
+  if (initData) h['X-Init-Data'] = initData;
+  return h;
+}
+
+function voiceUrl(text) { return '/api/voice?text=' + encodeURIComponent(text); }
+function singUrl(text) { return '/api/sing?text=' + encodeURIComponent(text); }
+
+/* ---------- Вход ---------- */
+var loginEl = document.getElementById('login');
+var passwordEl = document.getElementById('password');
+var loginBtn = document.getElementById('loginBtn');
+var loginErr = document.getElementById('loginErr');
+
+function showLogin() { if (loginEl) loginEl.classList.remove('hidden'); }
+function hideLogin() { if (loginEl) loginEl.classList.add('hidden'); }
+
+async function doLogin() {
+  if (loginErr) loginErr.textContent = '';
+  try {
+    var r = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: passwordEl.value })
+    });
+    if (r.ok) {
+      hideLogin();
+      passwordEl.value = '';
+      input.focus();
+    } else if (loginErr) {
+      loginErr.textContent = 'Неверный пароль';
+    }
+  } catch (e) {
+    if (loginErr) loginErr.textContent = 'Ошибка сети';
+  }
+}
+if (loginBtn) loginBtn.addEventListener('click', doLogin);
+if (passwordEl) passwordEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
+
+async function checkAuth() {
+  if (initData) { hideLogin(); return; }
+  try {
+    var r = await fetch('/api/me');
+    if (r.ok) hideLogin(); else showLogin();
+  } catch (e) { showLogin(); }
+}
+
+/* ---------- Звук/аватар ---------- */
+function unlockAudio() {
+  if (unlocked) return;
+  unlocked = true;
+  try {
+    var a = new Audio('silent.mp3');
+    a.volume = 0;
+    a.play().catch(function () {});
+  } catch (e) {}
+}
+
+function addMessage(text, who, audio) {
+  var el = document.createElement('div');
+  el.className = 'msg ' + who;
+  var span = document.createElement('span');
+  span.textContent = text;
+  el.appendChild(span);
+  if (who === 'bot' && audio) {
+    var btn = document.createElement('button');
+    btn.className = 'play';
+    btn.textContent = '🔊';
+    btn.addEventListener('click', function () { unlockAudio(); playVoice(audio, text); });
+    el.appendChild(btn);
+  }
+  messages.appendChild(el);
+  messages.scrollTop = messages.scrollHeight;
+  return el;
+}
+
+function fallbackTalk(text) {
+  if (!window.BonyaAvatar) return;
+  var ms = Math.min(9000, 900 + (text ? text.length * 75 : 1500));
+  window.BonyaAvatar.startTalking();
+  setTimeout(function () { window.BonyaAvatar.stopTalking(); }, ms);
+}
+
+function playVoice(url, text) {
+  try {
+    if (currentAudio) { try { currentAudio.pause(); } catch (e) {} currentAudio = null; }
+    var audio = new Audio(url);
+    currentAudio = audio;
+    var started = false;
+    function beginTalk() { started = true; if (window.BonyaAvatar) window.BonyaAvatar.startTalking(); }
+    audio.onplay = beginTalk;
+    audio.onplaying = beginTalk;
+    audio.onended = function () { if (window.BonyaAvatar) window.BonyaAvatar.stopTalking(); };
+    audio.onerror = function () { if (!started) fallbackTalk(text); };
+    var p = audio.play();
+    if (p && p.catch) p.catch(function () { if (!started) fallbackTalk(text); });
+  } catch (e) {
+    fallbackTalk(text);
+  }
+}
+
+function stopAudio() {
+  if (currentAudio) {
+    try { currentAudio.pause(); currentAudio.currentTime = 0; } catch (e) {}
+    currentAudio = null;
+  }
+  if (window.BonyaAvatar) window.BonyaAvatar.stopTalking();
+}
+
+function singText(text) {
+  unlockAudio();
+  var pending = addMessage('🎵 Пою…', 'bot');
+  pending.classList.add('typing');
+  if (window.BonyaAvatar) window.BonyaAvatar.setEmotion('happy');
+  var audio = new Audio(singUrl(text));
+  currentAudio = audio;
+  var shown = false;
+  audio.onplaying = function () {
+    if (!shown) {
+      shown = true;
+      if (pending.parentNode) pending.remove();
+      addMessage('🎵 ' + text, 'bot');
+    }
+    if (window.BonyaAvatar) window.BonyaAvatar.startTalking();
+  };
+  audio.onended = function () {
+    if (window.BonyaAvatar) { window.BonyaAvatar.stopTalking(); window.BonyaAvatar.setEmotion('idle'); }
+  };
+  function fail() {
+    if (pending.parentNode) pending.remove();
+    addMessage('Не получилось спеть 😔', 'bot');
+    if (window.BonyaAvatar) window.BonyaAvatar.setEmotion('idle');
+  }
+  audio.onerror = fail;
+  var p = audio.play();
+  if (p && p.catch) p.catch(fail);
+}
+
+/* ---------- Чат ---------- */
+async function sendMessage() {
+  var text = input.value.trim();
+  if (!text || busy) return;
+  unlockAudio();
+  input.value = '';
+  addMessage(text, 'user');
+  chatHistory.push({ role: 'user', content: text });
+  if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+
+  busy = true;
+  send.disabled = true;
+  if (window.BonyaAvatar) window.BonyaAvatar.setEmotion('thinking');
+  var pending = addMessage('Боня печатает…', 'bot');
+  pending.classList.add('typing');
+
+  try {
+    var resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ messages: chatHistory })
+    });
+    if (resp.status === 403) {
+      if (pending.parentNode) pending.remove();
+      addMessage('Нет доступа. Открой чат через бота или войди по паролю.', 'bot');
+      busy = false; send.disabled = false;
+      return;
+    }
+    var data = await resp.json();
+    if (pending.parentNode) pending.remove();
+    var reply = data.reply || data.error || 'Не получилось ответить 😔';
+    addMessage(reply, 'bot', voiceUrl(reply));
+    chatHistory.push({ role: 'assistant', content: reply });
+    if (window.BonyaAvatar) window.BonyaAvatar.setEmotion('happy');
+    setTimeout(function () { if (window.BonyaAvatar) window.BonyaAvatar.setEmotion('idle'); }, 1600);
+    if (window.BonyaAvatar) window.BonyaAvatar.startTalking();
+    if (soundOn) {
+      playVoice(voiceUrl(reply), reply);
+    } else {
+      var estMs = Math.min(20000, 1500 + reply.length * 80);
+      setTimeout(function () { if (window.BonyaAvatar) window.BonyaAvatar.stopTalking(); }, estMs);
+    }
+  } catch (err) {
+    if (pending.parentNode) pending.remove();
+    addMessage('Ошибка связи с сервером 😔', 'bot');
+  }
+  busy = false;
+  send.disabled = false;
+  input.focus();
+}
+
+send.addEventListener('click', sendMessage);
+input.addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
+
+voiceBtn.addEventListener('click', function () {
+  unlockAudio();
+  soundOn = !soundOn;
+  if (!soundOn) stopAudio();
+  voiceBtn.classList.toggle('on', soundOn);
+  soundBtn.classList.toggle('on', soundOn);
+});
+
+soundBtn.addEventListener('click', function () {
+  unlockAudio();
+  soundOn = !soundOn;
+  if (!soundOn) stopAudio();
+  voiceBtn.classList.toggle('on', soundOn);
+  soundBtn.classList.toggle('on', soundOn);
+});
+
+singBtn.addEventListener('click', function () {
+  var text = input.value.trim() || 'Ля-ля-ля, я пою песенку свою';
+  input.value = '';
+  addMessage(text, 'user');
+  singText(text);
+});
+
+voiceBtn.classList.add('on');
+soundBtn.classList.add('on');
+
+addMessage('Привет! Я Боня — твой живой ИИ-помощник. Спроси меня о чём-нибудь! 🤖', 'bot', voiceUrl('Привет! Я Боня. Спроси меня о чём-нибудь!'));
+checkAuth();
+input.focus();
