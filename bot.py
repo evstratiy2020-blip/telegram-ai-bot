@@ -42,6 +42,8 @@ SITE_PASSWORD_HASH = os.getenv(
     "SITE_PASSWORD_HASH",
     "pbkdf2_sha256$ZAFv7Zpy2VxigCK5a9Qzpw==$G4QpmNzINw7xdoI7ESRU/ZJRHjgbMsmJVAdoOSI0Ms8=",
 )
+SESSION_TOKEN = hmac.new(BOT_TOKEN.encode(), b"site-session-v1", hashlib.sha256).hexdigest()
+APP_KEY = hmac.new(BOT_TOKEN.encode(), b"app-key-v1", hashlib.sha256).hexdigest()[:24]
 LLM_API_KEY = os.getenv("LLM_API_KEY")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
@@ -60,7 +62,7 @@ if RENDER_URL:
     if not WEBHOOK_URL:
         WEBHOOK_URL = RENDER_URL + WEBHOOK_PATH
     if not MINIAPP_URL:
-        MINIAPP_URL = RENDER_URL + "/app?v=3"
+        MINIAPP_URL = RENDER_URL + "/app?k=" + APP_KEY
 
 SYSTEM_PROMPT = (
     "Ты — полезный ИИ-ассистент в Telegram. "
@@ -184,12 +186,12 @@ def check_password(password: str) -> bool:
         return False
 
 
-SESSION_TOKEN = hmac.new(BOT_TOKEN.encode(), b"site-session-v1", hashlib.sha256).hexdigest()
-
-
 def is_authorized(request) -> bool:
     uid = get_webapp_user_id(request.headers.get("X-Init-Data", ""))
     if OWNER_ID and uid == OWNER_ID:
+        return True
+    key = request.query.get("k", "")
+    if key and hmac.compare_digest(key, APP_KEY):
         return True
     if SITE_PASSWORD_HASH and request.cookies.get("nav_auth") == SESSION_TOKEN:
         return True
