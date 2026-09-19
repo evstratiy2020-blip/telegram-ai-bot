@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -29,6 +30,10 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "8768178048"))
+SITE_PASSWORD_HASH = os.getenv(
+    "SITE_PASSWORD_HASH",
+    "pbkdf2_sha256$ZAFv7Zpy2VxigCK5a9Qzpw==$G4QpmNzINw7xdoI7ESRU/ZJRHjgbMsmJVAdoOSI0Ms8=",
+)
 LLM_API_KEY = os.getenv("LLM_API_KEY")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
@@ -161,6 +166,29 @@ def get_webapp_user_id(init_data: str) -> int | None:
     except Exception:
         return None
     return user.get("id")
+
+
+def check_password(password: str) -> bool:
+    try:
+        _algo, salt_b64, hash_b64 = SITE_PASSWORD_HASH.split("$")
+        salt = base64.b64decode(salt_b64)
+        expected = base64.b64decode(hash_b64)
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 200000)
+        return hmac.compare_digest(dk, expected)
+    except Exception:
+        return False
+
+
+SESSION_TOKEN = hmac.new(BOT_TOKEN.encode(), b"site-session-v1", hashlib.sha256).hexdigest()
+
+
+def is_authorized(request) -> bool:
+    uid = get_webapp_user_id(request.headers.get("X-Init-Data", ""))
+    if OWNER_ID and uid == OWNER_ID:
+        return True
+    if SITE_PASSWORD_HASH and request.cookies.get("nav_auth") == SESSION_TOKEN:
+        return True
+    return False
 
 
 async def ask_llm(messages: list[dict]) -> str:
@@ -393,8 +421,7 @@ def run_webhook() -> None:
         )
 
     async def api_chat(request: web.Request) -> web.Response:
-        uid = get_webapp_user_id(request.headers.get("X-Init-Data", ""))
-        if OWNER_ID and uid != OWNER_ID:
+        if not is_authorized(request):
             return web.json_response({"error": "forbidden"}, status=403)
         try:
             data = await request.json()
@@ -411,8 +438,7 @@ def run_webhook() -> None:
             return web.json_response({"error": str(exc)}, status=500)
 
     async def api_voice(request: web.Request) -> web.Response:
-        uid = get_webapp_user_id(request.headers.get("X-Init-Data", ""))
-        if OWNER_ID and uid != OWNER_ID:
+        if not is_authorized(request):
             return web.json_response({"error": "forbidden"}, status=403)
         try:
             data = await request.json()
@@ -436,10 +462,30 @@ def run_webhook() -> None:
             if os.path.exists(path):
                 os.remove(path)
 
+    async def api_login(request: web.Request) -> web.Response:
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "bad json"}, status=400)
+        password = (data.get("password") or "") if isinstance(data, dict) else ""
+        if not check_password(password):
+            return web.json_response({"error": "wrong password"}, status=401)
+        resp = web.json_response({"ok": True})
+        resp.set_cookie(
+            "nav_auth",
+            SESSION_TOKEN,
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+            max_age=60 * 60 * 24 * 365,
+        )
+        return resp
+
     app.router.add_get("/", serve_app)
     app.router.add_get("/app", serve_app)
     app.router.add_post("/api/chat", api_chat)
     app.router.add_post("/api/voice", api_voice)
+    app.router.add_post("/api/login", api_login)
 
     async def self_ping() -> None:
         if not RENDER_URL:
