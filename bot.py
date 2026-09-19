@@ -67,7 +67,7 @@ FFMPEG = os.getenv("FFMPEG_PATH", "ffmpeg")
 FLANGER = "flanger=delay=8:depth=3:regen=0.2:width=71:speed=0.5"
 
 VOICE_PRESETS = {
-    "1": ("лилипут", "ru-RU-DmitryNeural", "-20%", "+80Hz", FLANGER),
+    "1": ("Боня", "ru-RU-DmitryNeural", "-20%", "+80Hz", FLANGER),
 }
 DEFAULT_PRESET = "1"
 
