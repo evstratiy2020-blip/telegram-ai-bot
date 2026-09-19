@@ -136,6 +136,7 @@
     var send = document.getElementById('send');
     var voiceSelect = document.getElementById('voice');
     var history = [];
+    var initData = (tg && tg.initData) ? tg.initData : '';
 
     function addMessage(text, who) {
       var el = document.createElement('div');
@@ -159,7 +160,7 @@
       try {
         var resp = await fetch('/api/voice', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData },
           body: JSON.stringify({ text: text, voice: voiceSelect.value })
         });
         if (!resp.ok) return;
@@ -182,7 +183,7 @@
       try {
         var resp = await fetch('/api/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData },
           body: JSON.stringify({ messages: history })
         });
         var data = await resp.json();
