@@ -60,7 +60,7 @@ if RENDER_URL:
     if not WEBHOOK_URL:
         WEBHOOK_URL = RENDER_URL + WEBHOOK_PATH
     if not MINIAPP_URL:
-        MINIAPP_URL = RENDER_URL + "/app?v=2"
+        MINIAPP_URL = RENDER_URL + "/app?v=3"
 
 SYSTEM_PROMPT = (
     "Ты — полезный ИИ-ассистент в Telegram. "
