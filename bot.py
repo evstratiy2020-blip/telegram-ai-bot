@@ -568,9 +568,19 @@ def run_webhook() -> None:
                 os.remove(path)
 
     async def api_me(request: web.Request) -> web.Response:
-        if is_authorized(request):
-            return web.json_response({"ok": True})
-        return web.json_response({"ok": False}, status=401)
+        if not is_authorized(request):
+            return web.json_response({"ok": False}, status=401)
+        resp = web.json_response({"ok": True})
+        if request.cookies.get("nav_auth") != SESSION_TOKEN:
+            resp.set_cookie(
+                "nav_auth",
+                SESSION_TOKEN,
+                httponly=True,
+                secure=True,
+                samesite="Lax",
+                max_age=60 * 60 * 24 * 365,
+            )
+        return resp
 
     async def serve_static(request: web.Request) -> web.Response:
         rel = request.match_info.get("path", "")
