@@ -114,17 +114,35 @@ function fallbackTalk(text) {
   setTimeout(function () { window.BonyaAvatar.stopTalking(); }, ms);
 }
 
+var activeAudios = [];
+
+function stopAllAudio() {
+  for (var i = 0; i < activeAudios.length; i++) {
+    try { activeAudios[i].pause(); activeAudios[i].currentTime = 0; } catch (e) {}
+  }
+  activeAudios = [];
+  currentAudio = null;
+  if (window.BonyaAvatar) window.BonyaAvatar.stopTalking();
+}
+
 function playVoice(url, text) {
   try {
-    if (currentAudio) { try { currentAudio.pause(); } catch (e) {} currentAudio = null; }
+    stopAllAudio();
     var audio = new Audio(url);
+    activeAudios.push(audio);
     currentAudio = audio;
     var started = false;
     function beginTalk() { started = true; if (window.BonyaAvatar) window.BonyaAvatar.startTalking(); }
     audio.onplay = beginTalk;
     audio.onplaying = beginTalk;
-    audio.onended = function () { if (window.BonyaAvatar) window.BonyaAvatar.stopTalking(); };
-    audio.onerror = function () { if (!started) fallbackTalk(text); };
+    audio.onended = function () {
+      var i = activeAudios.indexOf(audio); if (i >= 0) activeAudios.splice(i, 1);
+      if (window.BonyaAvatar) window.BonyaAvatar.stopTalking();
+    };
+    audio.onerror = function () {
+      var i = activeAudios.indexOf(audio); if (i >= 0) activeAudios.splice(i, 1);
+      if (!started) fallbackTalk(text);
+    };
     var p = audio.play();
     if (p && p.catch) p.catch(function () { if (!started) fallbackTalk(text); });
   } catch (e) {
@@ -133,19 +151,17 @@ function playVoice(url, text) {
 }
 
 function stopAudio() {
-  if (currentAudio) {
-    try { currentAudio.pause(); currentAudio.currentTime = 0; } catch (e) {}
-    currentAudio = null;
-  }
-  if (window.BonyaAvatar) window.BonyaAvatar.stopTalking();
+  stopAllAudio();
 }
 
 function singText(text) {
   unlockAudio();
+  stopAllAudio();
   var pending = addMessage('🎵 Пою…', 'bot');
   pending.classList.add('typing');
   if (window.BonyaAvatar) window.BonyaAvatar.setEmotion('happy');
   var audio = new Audio(singUrl(text));
+  activeAudios.push(audio);
   currentAudio = audio;
   var shown = false;
   audio.onplaying = function () {
