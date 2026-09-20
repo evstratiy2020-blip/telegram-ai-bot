@@ -135,12 +135,14 @@ def voice_keyboard() -> InlineKeyboardMarkup:
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
-    keyboard = [
-        [KeyboardButton(text="🎙 Голос"), KeyboardButton(text="🔇 Молчать")],
-        [KeyboardButton(text="🎼 Песни")],
+    row = [
+        KeyboardButton(text="🎙 Голос"),
+        KeyboardButton(text="🔇 Молчать"),
+        KeyboardButton(text="🎼 Песни"),
     ]
     if MINIAPP_URL:
-        keyboard.append([KeyboardButton(text="🚀 Открыть Боню", web_app=WebAppInfo(url=MINIAPP_URL))])
+        row.append(KeyboardButton(text="🚀 Боня", web_app=WebAppInfo(url=MINIAPP_URL)))
+    keyboard = [row]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
