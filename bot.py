@@ -102,6 +102,7 @@ voice_enabled: set[int] = set()
 voice_settings: dict[int, str] = {}
 image_mode: set[int] = set()
 sing_mode: set[int] = set()
+memory_facts: list[str] = []
 
 
 class OwnerOnlyMiddleware(BaseMiddleware):
@@ -206,9 +207,12 @@ def is_authorized(request) -> bool:
 
 
 async def ask_llm(messages: list[dict]) -> str:
+    system = SYSTEM_PROMPT
+    if memory_facts:
+        system += "\n\nЧто ты помнишь о пользователе (учитывай это):\n" + "\n".join(f"- {f}" for f in memory_facts)
     payload = {
         "model": LLM_MODEL,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+        "messages": [{"role": "system", "content": system}] + messages,
         "stream": False,
     }
     headers = {"Authorization": f"Bearer {LLM_API_KEY}"}
@@ -217,6 +221,29 @@ async def ask_llm(messages: list[dict]) -> str:
         resp.raise_for_status()
         data = resp.json()
     return data["choices"][0]["message"]["content"].strip()
+
+
+async def update_memory(messages: list[dict], reply: str) -> None:
+    global memory_facts
+    convo = "\n".join(f"{m['role']}: {m['content']}" for m in messages[-6:]) + f"\nassistant: {reply}"
+    prompt = (
+        "Ниже список фактов о пользователе и последний диалог. Обнови список: "
+        "добавь новые важные факты о пользователе (имя, интересы, привычки, важное), убери устаревшее. "
+        "Верни только список фактов, каждый с новой строки, без нумерации.\n\n"
+        "Текущие факты:\n" + ("\n".join(memory_facts) if memory_facts else "(пусто)") + "\n\nДиалог:\n" + convo
+    )
+    payload = {"model": LLM_MODEL, "messages": [{"role": "user", "content": prompt}], "stream": False}
+    headers = {"Authorization": f"Bearer {LLM_API_KEY}"}
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(LLM_URL, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        text = data["choices"][0]["message"]["content"].strip()
+        facts = [ln.strip("-• \t") for ln in text.splitlines() if ln.strip()]
+        memory_facts = facts[:30]
+    except Exception:
+        pass
 
 
 async def generate_voice(text: str, out_path: str, voice: str, rate: str, pitch: str, audio_filter: str) -> None:
@@ -486,6 +513,7 @@ async def chat(message: Message) -> None:
         await sent.edit_text(reply)
         hist.append({"role": "assistant", "content": reply})
         history[uid] = hist[-HISTORY_LIMIT:]
+        asyncio.create_task(update_memory(hist, reply))
 
         if uid in voice_enabled:
             try:
@@ -537,6 +565,7 @@ def run_webhook() -> None:
         try:
             reply = await ask_llm(messages[-HISTORY_LIMIT:])
             reply = strip_markdown(reply or "")
+            asyncio.create_task(update_memory(messages[-HISTORY_LIMIT:], reply))
             return web.json_response({"reply": reply})
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=500)
