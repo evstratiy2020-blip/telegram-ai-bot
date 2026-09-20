@@ -288,8 +288,8 @@ if (SR) {
     var text = e.results[0][0].transcript;
     if (text) { input.value = text; sendMessage(); }
   };
-  recognition.onend = function () { if (micOn) restartMicSoon(); };
-  recognition.onerror = function () { if (micOn) restartMicSoon(); };
+  recognition.onend = function () { micOn = false; if (micBtn) micBtn.classList.remove('on'); };
+  recognition.onerror = function () { micOn = false; if (micBtn) micBtn.classList.remove('on'); };
 }
 if (micBtn) {
   micBtn.addEventListener('click', function () {
