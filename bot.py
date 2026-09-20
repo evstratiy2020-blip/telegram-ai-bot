@@ -276,11 +276,14 @@ async def _ffmpeg(args: list[str]) -> None:
     await proc.wait()
 
 
-async def generate_voice_mp3(text: str, out_path: str, voice: str, rate: str, pitch: str, audio_filter: str) -> None:
+async def generate_voice_mp3(text: str, out_path: str, voice: str, rate: str, pitch: str, audio_filter: str, raw: bool = False) -> None:
     src = out_path + ".src.mp3"
     communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
     await communicate.save(src)
-    await _ffmpeg(["-i", src, "-af", audio_filter, "-c:a", "libmp3lame", "-b:a", "96k", out_path])
+    if raw:
+        os.replace(src, out_path)
+        return
+    await _ffmpeg(["-i", src, "-af", audio_filter, "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "48k", out_path])
     if os.path.exists(src):
         os.remove(src)
 
@@ -624,7 +627,7 @@ def run_webhook() -> None:
         fd, path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
         try:
-            await generate_voice_mp3(text, path, voice, rate, pitch, audio_filter)
+            await generate_voice_mp3(text, path, voice, rate, pitch, audio_filter, raw=bool(request.query.get("raw")))
             with open(path, "rb") as fh:
                 audio = fh.read()
             return web.Response(body=audio, content_type="audio/mpeg")
