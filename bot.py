@@ -409,7 +409,8 @@ async def kb_sing(message: Message) -> None:
 @dp.message(F.text == "🔇 Молчать")
 async def kb_voice_off(message: Message) -> None:
     voice_enabled.discard(message.from_user.id)
-    await message.answer("Молчу. Буду отвечать только текстом. 🤐")
+    sing_mode.discard(message.from_user.id)
+    await message.answer("Молчу. Отвечаю только текстом, без голоса и песен. 🤐")
 
 
 @dp.message(F.text == "🧠 Стереть память")
