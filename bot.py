@@ -252,7 +252,20 @@ async def generate_voice_mp3(text: str, out_path: str, voice: str, rate: str, pi
         os.remove(src)
 
 
-SING_SCALE = [185, 208, 233, 247, 277, 311, 277, 247, 233, 208]
+SING_SCALE = [262, 294, 330, 294, 392, 330, 294, 262, 330, 294, 262, 220]
+
+
+def _sounding_intervals(snd) -> list:
+    tg = praat_call(snd, "To TextGrid (silences)", 100, 0.0, -25.0, 0.08, 0.04, "silent", "sounding")
+    n = praat_call(tg, "Get number of intervals", 1)
+    spans = []
+    for i in range(1, n + 1):
+        if praat_call(tg, "Get label of interval", 1, i) == "sounding":
+            t1 = praat_call(tg, "Get start time of interval", 1, i)
+            t2 = praat_call(tg, "Get end time of interval", 1, i)
+            if t2 - t1 > 0.03:
+                spans.append((t1, t2))
+    return spans
 
 
 async def generate_sing_mp3(text: str, out_path: str, voice: str, pitch: str, audio_filter: str) -> None:
@@ -261,17 +274,21 @@ async def generate_sing_mp3(text: str, out_path: str, voice: str, pitch: str, au
     src = out_path + ".src.mp3"
     wav = out_path + ".src.wav"
     sang = out_path + ".sang.wav"
-    communicate = edge_tts.Communicate(text, voice, rate="-15%", pitch=pitch)
+    communicate = edge_tts.Communicate(text, voice, rate="-12%", pitch=pitch)
     await communicate.save(src)
     await _ffmpeg(["-i", src, "-ac", "1", "-ar", "44100", wav])
     snd = parselmouth.Sound(wav)
     duration = snd.get_total_duration()
-    manipulation = praat_call(snd, "To Manipulation", 0.01, 60, 600)
+    manipulation = praat_call(snd, "To Manipulation", 0.01, 60, 700)
     pitch_tier = praat_call("Create PitchTier", "melody", 0.0, duration)
-    n = max(4, int(duration / 0.32))
-    step = duration / n
-    for i in range(n):
-        praat_call(pitch_tier, "Add point", i * step + step * 0.5, float(SING_SCALE[i % len(SING_SCALE)]))
+    spans = _sounding_intervals(snd) or [(0.0, duration)]
+    for idx, (t1, t2) in enumerate(spans):
+        base = SING_SCALE[idx % len(SING_SCALE)]
+        t = t1
+        while t < t2:
+            praat_call(pitch_tier, "Add point", t, float(base))
+            t += 0.02
+        praat_call(pitch_tier, "Add point", t2 - 0.005, float(base))
     praat_call([manipulation, pitch_tier], "Replace pitch tier")
     resynth = praat_call(manipulation, "Get resynthesis (overlap-add)")
     resynth.save(sang, "WAV")
