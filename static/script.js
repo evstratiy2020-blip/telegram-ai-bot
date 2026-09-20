@@ -132,15 +132,19 @@ function playVoice(url, text) {
     activeAudios.push(audio);
     currentAudio = audio;
     var started = false;
-    function beginTalk() { started = true; if (window.BonyaAvatar) window.BonyaAvatar.startTalking(); }
+    function beginTalk() { started = true; botSpeaking = true; if (window.BonyaAvatar) window.BonyaAvatar.startTalking(); }
     audio.onplay = beginTalk;
     audio.onplaying = beginTalk;
     audio.onended = function () {
       var i = activeAudios.indexOf(audio); if (i >= 0) activeAudios.splice(i, 1);
       if (window.BonyaAvatar) window.BonyaAvatar.stopTalking();
+      botSpeaking = false;
+      restartMicSoon();
     };
     audio.onerror = function () {
       var i = activeAudios.indexOf(audio); if (i >= 0) activeAudios.splice(i, 1);
+      botSpeaking = false;
+      restartMicSoon();
       if (!started) fallbackTalk(text);
     };
     var p = audio.play();
@@ -225,7 +229,7 @@ async function sendMessage() {
       playVoice(voiceUrl(reply), reply);
     } else {
       var estMs = Math.min(20000, 1500 + reply.length * 80);
-      setTimeout(function () { if (window.BonyaAvatar) window.BonyaAvatar.stopTalking(); }, estMs);
+      setTimeout(function () { if (window.BonyaAvatar) window.BonyaAvatar.stopTalking(); restartMicSoon(); }, estMs);
     }
   } catch (err) {
     if (pending.parentNode) pending.remove();
@@ -264,8 +268,17 @@ singBtn.addEventListener('click', function () {
 
 var micBtn = document.getElementById('micBtn');
 var recognition = null;
-var listening = false;
+var micOn = false;
+var botSpeaking = false;
 var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function restartMicSoon() {
+  if (!micOn || !recognition || botSpeaking) return;
+  setTimeout(function () {
+    if (micOn && !botSpeaking) { try { recognition.start(); } catch (e) {} }
+  }, 400);
+}
+
 if (SR) {
   recognition = new SR();
   recognition.lang = 'ru-RU';
@@ -273,20 +286,24 @@ if (SR) {
   recognition.maxAlternatives = 1;
   recognition.onresult = function (e) {
     var text = e.results[0][0].transcript;
-    input.value = text;
-    sendMessage();
+    if (text) { input.value = text; sendMessage(); }
   };
-  recognition.onend = function () { listening = false; if (micBtn) micBtn.classList.remove('on'); };
-  recognition.onerror = function () { listening = false; if (micBtn) micBtn.classList.remove('on'); };
+  recognition.onend = function () { if (micOn) restartMicSoon(); };
+  recognition.onerror = function () { if (micOn) restartMicSoon(); };
 }
 if (micBtn) {
   micBtn.addEventListener('click', function () {
     unlockAudio();
     if (!recognition) { addMessage('Голосовой ввод не поддерживается в этом браузере 😔', 'bot'); return; }
-    if (listening) { try { recognition.stop(); } catch (e) {} return; }
-    listening = true;
-    micBtn.classList.add('on');
-    try { recognition.start(); } catch (e) { listening = false; micBtn.classList.remove('on'); }
+    if (micOn) {
+      micOn = false;
+      micBtn.classList.remove('on');
+      try { recognition.stop(); } catch (e) {}
+    } else {
+      micOn = true;
+      micBtn.classList.add('on');
+      try { recognition.start(); } catch (e) { micOn = false; micBtn.classList.remove('on'); }
+    }
   });
 }
 
