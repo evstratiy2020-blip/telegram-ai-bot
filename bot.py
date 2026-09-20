@@ -99,6 +99,7 @@ history: dict[int, list[dict]] = {}
 voice_enabled: set[int] = set()
 voice_settings: dict[int, str] = {}
 image_mode: set[int] = set()
+sing_mode: set[int] = set()
 
 
 class OwnerOnlyMiddleware(BaseMiddleware):
@@ -134,6 +135,7 @@ def voice_keyboard() -> InlineKeyboardMarkup:
 def main_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton(text="🎙 Голос"), KeyboardButton(text="🔇 Молчать")],
+        [KeyboardButton(text="🎼 Песни")],
     ]
     if MINIAPP_URL:
         keyboard.append([KeyboardButton(text="🚀 Открыть Боню", web_app=WebAppInfo(url=MINIAPP_URL))])
@@ -268,7 +270,7 @@ def _sounding_intervals(snd) -> list:
     return spans
 
 
-async def generate_sing_mp3(text: str, out_path: str, voice: str, pitch: str, audio_filter: str) -> None:
+async def generate_sing(text: str, out_path: str, voice: str, pitch: str, audio_filter: str, fmt: str = "mp3") -> None:
     if parselmouth is None:
         raise RuntimeError("parselmouth unavailable")
     src = out_path + ".src.mp3"
@@ -292,7 +294,8 @@ async def generate_sing_mp3(text: str, out_path: str, voice: str, pitch: str, au
     praat_call([manipulation, pitch_tier], "Replace pitch tier")
     resynth = praat_call(manipulation, "Get resynthesis (overlap-add)")
     resynth.save(sang, "WAV")
-    await _ffmpeg(["-i", sang, "-af", audio_filter, "-c:a", "libmp3lame", "-b:a", "128k", out_path])
+    codec = ["-c:a", "libopus", "-b:a", "64k"] if fmt == "ogg" else ["-c:a", "libmp3lame", "-b:a", "128k"]
+    await _ffmpeg(["-i", sang, "-af", audio_filter, *codec, out_path])
     for p in (src, wav, sang):
         if os.path.exists(p):
             os.remove(p)
@@ -340,6 +343,20 @@ async def draw_image(message: Message, prompt: str) -> None:
         await sent.edit_text(f"Не получилось нарисовать: {exc}")
 
 
+async def sing_reply(message: Message, text: str) -> None:
+    sent = await message.answer("🎼 Пою…")
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+            path = f.name
+        _name, voice, _rate, pitch, audio_filter = VOICE_PRESETS[DEFAULT_PRESET]
+        await generate_sing(text, path, voice, pitch, audio_filter, fmt="ogg")
+        await message.answer_voice(FSInputFile(path))
+        os.remove(path)
+        await sent.delete()
+    except Exception as exc:
+        await sent.edit_text(f"Не получилось спеть: {exc}")
+
+
 @dp.message(CommandStart())
 async def start(message: Message) -> None:
     await message.answer(ABOUT_TEXT, reply_markup=main_keyboard())
@@ -372,6 +389,17 @@ async def kb_voice(message: Message) -> None:
 async def kb_image(message: Message) -> None:
     image_mode.add(message.from_user.id)
     await message.answer("Включил режим рисования. Напиши, что нарисовать (или сразу /img описание).")
+
+
+@dp.message(F.text == "🎼 Песни")
+async def kb_sing(message: Message) -> None:
+    uid = message.from_user.id
+    if uid in sing_mode:
+        sing_mode.discard(uid)
+        await message.answer("Режим песен выключен. Отвечаю как обычно. 💬")
+    else:
+        sing_mode.add(uid)
+        await message.answer("🎼 Режим песен включён! Напиши любой текст — спою его голосом Бони.")
 
 
 @dp.message(F.text == "🔇 Молчать")
@@ -431,6 +459,11 @@ async def chat(message: Message) -> None:
         prompt = (message.text or "").strip()
         if prompt:
             await draw_image(message, prompt)
+            return
+    if uid in sing_mode:
+        text = (message.text or "").strip()
+        if text:
+            await sing_reply(message, text)
             return
     hist = get_history(uid)
     hist.append({"role": "user", "content": message.text or ""})
@@ -577,7 +610,7 @@ def run_webhook() -> None:
         fd, path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
         try:
-            await generate_sing_mp3(text, path, voice, pitch, audio_filter)
+            await generate_sing(text, path, voice, pitch, audio_filter, fmt="mp3")
             with open(path, "rb") as fh:
                 audio = fh.read()
             return web.Response(body=audio, content_type="audio/mpeg")
