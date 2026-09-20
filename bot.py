@@ -70,7 +70,7 @@ if RENDER_URL:
 SYSTEM_PROMPT = (
     "Ты — полезный ИИ-ассистент в Telegram. "
     "Отвечай на языке собеседника (по умолчанию на русском), "
-    "кратко, понятно и по делу. "
+    "очень кратко (1-3 предложения), понятно и по делу. "
     "Отвечай обычным текстом без markdown: не используй звёздочки (*, **), "
     "решётки (#), нижние подчёркивания (_) и обратные кавычки (`)."
 )
@@ -524,7 +524,7 @@ async def chat(message: Message) -> None:
                 _name, voice, rate, pitch, audio_filter = VOICE_PRESETS[key]
                 with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
                     audio_path = f.name
-                await generate_voice(reply, audio_path, voice, rate, pitch, audio_filter)
+                await generate_voice(reply[:300], audio_path, voice, rate, pitch, audio_filter)
                 await message.answer_voice(FSInputFile(audio_path))
                 os.remove(audio_path)
             except Exception:
@@ -620,7 +620,7 @@ def run_webhook() -> None:
     async def api_voice_get(request: web.Request) -> web.Response:
         if not is_authorized(request):
             return web.json_response({"error": "forbidden"}, status=403)
-        text = (request.query.get("text") or "").strip()[:600]
+        text = (request.query.get("text") or "").strip()[:300]
         if not text:
             return web.json_response({"error": "no text"}, status=400)
         _name, voice, rate, pitch, audio_filter = VOICE_PRESETS[DEFAULT_PRESET]
