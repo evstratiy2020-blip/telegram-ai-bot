@@ -262,6 +262,34 @@ singBtn.addEventListener('click', function () {
   singText(text);
 });
 
+var micBtn = document.getElementById('micBtn');
+var recognition = null;
+var listening = false;
+var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (SR) {
+  recognition = new SR();
+  recognition.lang = 'ru-RU';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.onresult = function (e) {
+    var text = e.results[0][0].transcript;
+    input.value = text;
+    sendMessage();
+  };
+  recognition.onend = function () { listening = false; if (micBtn) micBtn.classList.remove('on'); };
+  recognition.onerror = function () { listening = false; if (micBtn) micBtn.classList.remove('on'); };
+}
+if (micBtn) {
+  micBtn.addEventListener('click', function () {
+    unlockAudio();
+    if (!recognition) { addMessage('Голосовой ввод не поддерживается в этом браузере 😔', 'bot'); return; }
+    if (listening) { try { recognition.stop(); } catch (e) {} return; }
+    listening = true;
+    micBtn.classList.add('on');
+    try { recognition.start(); } catch (e) { listening = false; micBtn.classList.remove('on'); }
+  });
+}
+
 voiceBtn.classList.add('on');
 soundBtn.classList.add('on');
 
