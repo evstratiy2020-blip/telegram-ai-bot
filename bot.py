@@ -100,13 +100,6 @@ VOICE_PRESETS = {
         "pitch": "+80Hz",
         "fx": FLANGER,
     },
-    "ring": {
-        "name": "Робот-металл",
-        "voice": "ru-RU-DmitryNeural",
-        "rate": "-15%",
-        "pitch": "+60Hz",
-        "fx": RING,
-    },
     "mono": {
         "name": "Робот-монотонный",
         "voice": "ru-RU-DmitryNeural",
