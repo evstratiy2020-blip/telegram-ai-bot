@@ -359,7 +359,9 @@ async def _ffmpeg(args: list[str]) -> None:
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    await proc.wait()
+    rc = await proc.wait()
+    if rc != 0:
+        raise RuntimeError(f"ffmpeg failed (code {rc})")
 
 
 SING_SCALE = [262, 294, 330, 294, 392, 330, 294, 262, 330, 294, 262, 220]
@@ -566,7 +568,7 @@ async def generate_sing(text: str, out_path: str, preset_key: str = DEFAULT_PRES
         write_wav(music, make_music(duration + 0.5, bpm, chords, kind))
         await _ffmpeg(["-i", fx, "-i", music, "-filter_complex",
                        "[0:a]volume=1.7[v];[1:a]volume=0.8[m];[v][m]amix=inputs=2:duration=longest:dropout_transition=0",
-                       "-c:a", "libmp3lame", "-b:a", "160k", out_path])
+                       *codec, out_path])
         for p in (fx, music):
             if os.path.exists(p):
                 os.remove(p)
