@@ -129,6 +129,7 @@ voice_enabled: set[int] = set()
 voice_settings: dict[int, str] = {}
 image_mode: set[int] = set()
 sing_mode: set[int] = set()
+music_settings: dict[int, str] = {}
 memory_facts: list[str] = []
 
 
@@ -162,11 +163,38 @@ def voice_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+MUSIC_NAMES = {
+    "none": "Без музыки",
+    "bassbeat": "Бас + бит",
+    "marimba": "Маримба",
+    "rock": "Рок",
+    "jazz": "Джаз",
+    "country": "Кантри",
+    "hiphop": "Хип-хоп",
+    "bit": "8-бит",
+    "ethnic": "Этно",
+    "sad": "Грустный",
+    "disco": "Диско",
+}
+
+
+def music_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    items = list(MUSIC_NAMES.items())
+    for i in range(0, len(items), 2):
+        rows.append([
+            InlineKeyboardButton(text=data, callback_data=f"music:{key}")
+            for key, data in items[i:i + 2]
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def main_keyboard() -> ReplyKeyboardMarkup:
     row = [
         KeyboardButton(text="🎙 Голос"),
         KeyboardButton(text="🔇 Молчать"),
         KeyboardButton(text="🎼 Песни"),
+        KeyboardButton(text="🎶 Музыка"),
     ]
     if MINIAPP_URL:
         row.append(KeyboardButton(text="🚀 Боня", web_app=WebAppInfo(url=MINIAPP_URL)))
@@ -575,7 +603,8 @@ async def sing_reply(message: Message, text: str) -> None:
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
             path = f.name
         key = voice_settings.get(message.from_user.id, DEFAULT_PRESET)
-        await generate_sing(text, path, key, fmt="ogg")
+        style = music_settings.get(message.from_user.id, "none")
+        await generate_sing(text, path, key, fmt="ogg", style=style)
         await message.answer_voice(FSInputFile(path))
         os.remove(path)
         await sent.delete()
@@ -591,6 +620,11 @@ async def start(message: Message) -> None:
 @dp.message(Command("voice"))
 async def voice_menu(message: Message) -> None:
     await message.answer("Выбери голос Бони:", reply_markup=voice_keyboard())
+
+
+@dp.message(Command("music"))
+async def music_menu(message: Message) -> None:
+    await message.answer("Выбери музыку для пения:", reply_markup=music_keyboard())
 
 
 @dp.message(Command("img"))
@@ -621,7 +655,13 @@ async def kb_sing(message: Message) -> None:
         await message.answer("Режим песен выключен. Отвечаю как обычно. 💬")
     else:
         sing_mode.add(uid)
-        await message.answer("🎼 Режим песен включён! Напиши любой текст — спою его голосом Бони.")
+        style = MUSIC_NAMES.get(music_settings.get(uid, "none"), "Без музыки")
+        await message.answer(f"🎼 Режим песен включён! Музыка: {style}.\nНапиши любой текст — спою его. Сменить музыку: /music")
+
+
+@dp.message(F.text == "🎶 Музыка")
+async def kb_music(message: Message) -> None:
+    await message.answer("Выбери музыку для пения:", reply_markup=music_keyboard())
 
 
 @dp.message(F.text == "🔇 Молчать")
@@ -665,6 +705,16 @@ async def voice_callback(cq: CallbackQuery) -> None:
             os.remove(audio_path)
         except Exception:
             pass
+    await cq.answer()
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("music:"))
+async def music_callback(cq: CallbackQuery) -> None:
+    uid = cq.from_user.id
+    key = cq.data.split(":", 1)[1]
+    if key in MUSIC_NAMES:
+        music_settings[uid] = key
+        await cq.message.edit_text(f"Музыка для пения: {MUSIC_NAMES[key]}", reply_markup=music_keyboard())
     await cq.answer()
 
 
