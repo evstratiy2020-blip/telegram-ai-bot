@@ -58,6 +58,10 @@ LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
 LLM_URL = f"{LLM_BASE_URL}/chat/completions"
 
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+VISION_MODEL = os.getenv("VISION_MODEL", "inclusionai/ling-3.0-flash-vl:free")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
 PORT = int(os.getenv("PORT", "7860"))
@@ -311,6 +315,26 @@ async def ask_llm(messages: list[dict]) -> str:
     headers = {"Authorization": f"Bearer {LLM_API_KEY}"}
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(LLM_URL, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    return data["choices"][0]["message"]["content"].strip()
+
+
+async def ask_vision(image_bytes: bytes, question: str) -> str:
+    b64 = base64.b64encode(image_bytes).decode()
+    body = {
+        "model": VISION_MODEL,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": question or "Опиши, что на картинке. Если есть текст — прочитай его."},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}},
+            ],
+        }],
+    }
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
         resp.raise_for_status()
         data = resp.json()
     return data["choices"][0]["message"]["content"].strip()
@@ -798,7 +822,22 @@ async def handle_document(message: Message) -> None:
 
 @dp.message(F.photo)
 async def handle_photo(message: Message) -> None:
-    await message.answer("Картинки я пока не умею читать 🙈 Подключим «зрение» чуть позже.")
+    if not OPENROUTER_API_KEY:
+        await message.answer("Картинки пока не настроены (нет ключа зрения).")
+        return
+    sent = await message.answer("👁 Смотрю…")
+    try:
+        photo = message.photo[-1]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "photo.jpg")
+            await bot.download(photo, destination=path)
+            with open(path, "rb") as f:
+                data = f.read()
+        question = (message.caption or "").strip()
+        reply = await ask_vision(data, question)
+        await sent.edit_text(strip_markdown(reply or "")[:4000])
+    except Exception as exc:
+        await sent.edit_text(f"Не получилось посмотреть: {exc}")
 
 
 @dp.message()
