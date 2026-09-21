@@ -189,6 +189,28 @@ def music_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def voice_music_keyboard(uid: int) -> InlineKeyboardMarkup:
+    cur_voice = voice_settings.get(uid, DEFAULT_PRESET)
+    cur_music = music_settings.get(uid, "none")
+    rows = [[
+        InlineKeyboardButton(
+            text=("✅ " if key == cur_voice else "") + data["name"],
+            callback_data=f"voice:{key}",
+        )
+        for key, data in VOICE_PRESETS.items()
+    ]]
+    items = list(MUSIC_NAMES.items())
+    for i in range(0, len(items), 2):
+        rows.append([
+            InlineKeyboardButton(
+                text=("✅ " if key == cur_music else "") + data,
+                callback_data=f"music:{key}",
+            )
+            for key, data in items[i:i + 2]
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def main_keyboard() -> ReplyKeyboardMarkup:
     row = [
         KeyboardButton(text="🎙 Голос"),
@@ -619,12 +641,12 @@ async def start(message: Message) -> None:
 
 @dp.message(Command("voice"))
 async def voice_menu(message: Message) -> None:
-    await message.answer("Выбери голос Бони:", reply_markup=voice_keyboard())
+    await message.answer("Голос и музыка для пения:", reply_markup=voice_music_keyboard(message.from_user.id))
 
 
 @dp.message(Command("music"))
 async def music_menu(message: Message) -> None:
-    await message.answer("Выбери музыку для пения:", reply_markup=music_keyboard())
+    await message.answer("Голос и музыка для пения:", reply_markup=voice_music_keyboard(message.from_user.id))
 
 
 @dp.message(Command("img"))
@@ -638,7 +660,7 @@ async def img_command(message: Message) -> None:
 
 @dp.message(F.text == "🎙 Голос")
 async def kb_voice(message: Message) -> None:
-    await message.answer("Выбери голос Бони:", reply_markup=voice_keyboard())
+    await message.answer("Голос и музыка для пения:", reply_markup=voice_music_keyboard(message.from_user.id))
 
 
 @dp.message(F.text == "🖼 Картинка")
@@ -661,7 +683,7 @@ async def kb_sing(message: Message) -> None:
 
 @dp.message(F.text == "🎶 Музыка")
 async def kb_music(message: Message) -> None:
-    await message.answer("Выбери музыку для пения:", reply_markup=music_keyboard())
+    await message.answer("Голос и музыка для пения:", reply_markup=voice_music_keyboard(message.from_user.id))
 
 
 @dp.message(F.text == "🔇 Молчать")
@@ -688,14 +710,14 @@ async def voice_callback(cq: CallbackQuery) -> None:
     action = cq.data.split(":", 1)[1]
     if action == "off":
         voice_enabled.discard(uid)
-        await cq.message.edit_text("Голос выключен.", reply_markup=voice_keyboard())
+        await cq.message.edit_text("Голос выключен.", reply_markup=voice_music_keyboard(uid))
     elif action in VOICE_PRESETS:
         voice_settings[uid] = action
         voice_enabled.add(uid)
         name = VOICE_PRESETS[action]["name"]
         await cq.message.edit_text(
             f"Выбран голос: {name}. Слушай пример ниже:",
-            reply_markup=voice_keyboard(),
+            reply_markup=voice_music_keyboard(uid),
         )
         try:
             with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
@@ -714,7 +736,7 @@ async def music_callback(cq: CallbackQuery) -> None:
     key = cq.data.split(":", 1)[1]
     if key in MUSIC_NAMES:
         music_settings[uid] = key
-        await cq.message.edit_text(f"Музыка для пения: {MUSIC_NAMES[key]}", reply_markup=music_keyboard())
+        await cq.message.edit_text(f"Музыка для пения: {MUSIC_NAMES[key]}", reply_markup=voice_music_keyboard(uid))
     await cq.answer()
 
 
