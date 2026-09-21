@@ -32,7 +32,11 @@ function authHeaders() {
 }
 
 function voiceUrl(text) { return '/api/voice?text=' + encodeURIComponent(text); }
-function singUrl(text) { return '/api/sing?text=' + encodeURIComponent(text); }
+function singUrl(text) {
+  var el = document.getElementById('musicStyle');
+  var st = el ? el.value : 'none';
+  return '/api/sing?text=' + encodeURIComponent(text) + '&style=' + encodeURIComponent(st);
+}
 
 /* ---------- Вход ---------- */
 var loginEl = document.getElementById('login');
