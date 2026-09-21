@@ -794,8 +794,9 @@ async def status_cmd(message: Message) -> None:
     voice_state = "вкл" if uid in voice_enabled else "выкл"
     voice_name = VOICE_PRESETS.get(voice_settings.get(uid, DEFAULT_PRESET), {}).get("name", "-")
     sing_state = "вкл" if uid in sing_mode else "выкл"
+    vision_state = "вкл" if OPENROUTER_API_KEY else "выкл (нет ключа)"
     await message.answer(
-        f"Режимы:\n🎙 Голос: {voice_state} ({voice_name})\n🎼 Песни: {sing_state}\n🧠 Память: {len(memory_facts)} фактов"
+        f"Режимы:\n🎙 Голос: {voice_state} ({voice_name})\n🎼 Песни: {sing_state}\n🧠 Память: {len(memory_facts)} фактов\n👁 Зрение: {vision_state}"
     )
 
 
