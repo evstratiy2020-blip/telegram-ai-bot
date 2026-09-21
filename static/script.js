@@ -21,6 +21,7 @@ var soundOn = true;
 var busy = false;
 var unlocked = false;
 var currentAudio = null;
+var singMode = false;
 
 var dbgEl = document.getElementById('dbg');
 function dbg(msg) { if (dbgEl) dbgEl.textContent = msg; }
@@ -165,38 +166,29 @@ function stopAudio() {
 function singText(text) {
   unlockAudio();
   stopAllAudio();
-  var pending = addMessage('🎵 Пою…', 'bot');
-  pending.classList.add('typing');
   if (window.BonyaAvatar) window.BonyaAvatar.setEmotion('happy');
   var audio = new Audio(singUrl(text));
   activeAudios.push(audio);
   currentAudio = audio;
-  var shown = false;
-  audio.onplaying = function () {
-    if (!shown) {
-      shown = true;
-      if (pending.parentNode) pending.remove();
-      addMessage('🎵 ' + text, 'bot');
-    }
-    if (window.BonyaAvatar) window.BonyaAvatar.startTalking();
-  };
+  audio.onplaying = function () { if (window.BonyaAvatar) window.BonyaAvatar.startTalking(); };
   audio.onended = function () {
     if (window.BonyaAvatar) { window.BonyaAvatar.stopTalking(); window.BonyaAvatar.setEmotion('idle'); }
   };
-  function fail() {
-    if (pending.parentNode) pending.remove();
-    addMessage('Не получилось спеть 😔', 'bot');
-    if (window.BonyaAvatar) window.BonyaAvatar.setEmotion('idle');
-  }
-  audio.onerror = fail;
+  audio.onerror = function () { if (window.BonyaAvatar) window.BonyaAvatar.setEmotion('idle'); };
   var p = audio.play();
-  if (p && p.catch) p.catch(fail);
+  if (p && p.catch) p.catch(function () {});
 }
 
 /* ---------- Чат ---------- */
 async function sendMessage() {
   var text = input.value.trim();
   if (!text || busy) return;
+  if (singMode) {
+    input.value = '';
+    addMessage(text, 'user');
+    singText(text);
+    return;
+  }
   unlockAudio();
   input.value = '';
   addMessage(text, 'user');
@@ -264,10 +256,10 @@ soundBtn.addEventListener('click', function () {
 });
 
 singBtn.addEventListener('click', function () {
-  var text = input.value.trim() || 'Ля-ля-ля, я пою песенку свою';
-  input.value = '';
-  addMessage(text, 'user');
-  singText(text);
+  unlockAudio();
+  singMode = !singMode;
+  singBtn.classList.toggle('on', singMode);
+  if (window.BonyaAvatar) window.BonyaAvatar.setEmotion(singMode ? 'happy' : 'idle');
 });
 
 var micBtn = document.getElementById('micBtn');
