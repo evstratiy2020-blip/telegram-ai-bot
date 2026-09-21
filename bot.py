@@ -253,6 +253,29 @@ def get_webapp_user_id(init_data: str) -> int | None:
     return user.get("id")
 
 
+def extract_text(path: str, name: str) -> str:
+    lower = name.lower()
+    if lower.endswith(".pdf"):
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(path)
+            return "\n".join((page.extract_text() or "") for page in reader.pages)
+        except Exception:
+            return ""
+    if lower.endswith(".docx"):
+        try:
+            import docx
+            doc = docx.Document(path)
+            return "\n".join(p.text for p in doc.paragraphs)
+        except Exception:
+            return ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
 def check_password(password: str) -> bool:
     try:
         _algo, salt_b64, hash_b64 = SITE_PASSWORD_HASH.split("$")
@@ -750,6 +773,32 @@ async def status_cmd(message: Message) -> None:
     await message.answer(
         f"Режимы:\n🎙 Голос: {voice_state} ({voice_name})\n🎼 Песни: {sing_state}\n🧠 Память: {len(memory_facts)} фактов"
     )
+
+
+@dp.message(F.document)
+async def handle_document(message: Message) -> None:
+    doc = message.document
+    sent = await message.answer("📄 Читаю файл…")
+    try:
+        name = doc.file_name or "file"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, name)
+            await bot.download(doc, destination=path)
+            text = extract_text(path, name)
+        if not text.strip():
+            await sent.edit_text("Не удалось извлечь текст из файла 😔 (поддерживаю txt, pdf, docx)")
+            return
+        text = text[:8000]
+        question = (message.caption or "").strip() or "Кратко перескажи, что в этом файле."
+        reply = await ask_llm([{"role": "user", "content": f"Содержимое файла:\n{text}\n\nВопрос: {question}"}])
+        await sent.edit_text(strip_markdown(reply or "")[:4000])
+    except Exception as exc:
+        await sent.edit_text(f"Ошибка чтения файла: {exc}")
+
+
+@dp.message(F.photo)
+async def handle_photo(message: Message) -> None:
+    await message.answer("Картинки я пока не умею читать 🙈 Подключим «зрение» чуть позже.")
 
 
 @dp.message()
