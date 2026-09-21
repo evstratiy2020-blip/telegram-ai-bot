@@ -145,6 +145,18 @@ body {
   justify-content: center;
 }
 .composer-buttons .icon-btn { flex: 1; max-width: 120px; height: 40px; }
+.music-select {
+  flex: 1;
+  max-width: 160px;
+  height: 40px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 14px;
+  padding: 0 10px;
+  font-size: 13px;
+  outline: none;
+}
 #input {
   flex: 1;
   min-width: 0;
