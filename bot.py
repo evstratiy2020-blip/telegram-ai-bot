@@ -502,6 +502,17 @@ async def clear_history(message: Message) -> None:
     await message.answer("История диалога очищена.")
 
 
+@dp.message(Command("status"))
+async def status_cmd(message: Message) -> None:
+    uid = message.from_user.id
+    voice_state = "вкл" if uid in voice_enabled else "выкл"
+    voice_name = VOICE_PRESETS.get(voice_settings.get(uid, DEFAULT_PRESET), {}).get("name", "-")
+    sing_state = "вкл" if uid in sing_mode else "выкл"
+    await message.answer(
+        f"Режимы:\n🎙 Голос: {voice_state} ({voice_name})\n🎼 Песни: {sing_state}\n🧠 Память: {len(memory_facts)} фактов"
+    )
+
+
 @dp.message()
 async def chat(message: Message) -> None:
     uid = message.from_user.id
