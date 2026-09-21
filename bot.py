@@ -8,7 +8,7 @@ import re
 import tempfile
 import wave
 
-# deploy marker: songs button
+# deploy marker: music styles v2
 from pathlib import Path
 from urllib.parse import parse_qsl, quote
 
