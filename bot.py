@@ -321,16 +321,43 @@ _F = [174.61, 220.00, 261.63]
 _G = [196.00, 246.94, 293.66]
 MAJOR = [_C, _Am, _F, _G]
 SAD = [_Am, _F, _C, _G]
-MUSIC_STYLES = {"sad": (80, SAD), "disco": (118, MAJOR)}
+MUSIC_STYLES = {
+    "sad": (80, SAD, "sad"),
+    "disco": (118, MAJOR, "disco"),
+    "bassbeat": (120, MAJOR, "bassbeat"),
+    "marimba": (112, MAJOR, "marimba"),
+    "rock": (140, MAJOR, "rock"),
+    "jazz": (120, MAJOR, "jazz"),
+    "country": (116, MAJOR, "country"),
+    "hiphop": (90, MAJOR, "hiphop"),
+    "bit": (130, MAJOR, "bit"),
+    "ethnic": (108, MAJOR, "ethnic"),
+}
 
 
-def _synth_pad(freqs, dur):
+def _tone(freq, dur, kind):
     t = np.linspace(0, dur, int(SR * dur), endpoint=False)
-    sig = np.zeros_like(t)
-    for f in freqs:
-        sig += 0.5 * np.sin(2 * np.pi * f * t) + 0.2 * np.sin(2 * np.pi * 2 * f * t)
-    sig /= len(freqs)
-    env = np.minimum(1, t * 8) * np.minimum(1, (dur - t) * 8)
+    if kind == "pluck":
+        sig = sum(a * np.sin(2 * np.pi * freq * h * t) for h, a in [(1, 0.6), (2, 0.3), (3, 0.15)])
+        env = np.exp(-t * 6) * np.minimum(1, t * 200)
+    elif kind == "bass":
+        sig = np.sin(2 * np.pi * freq * t) + 0.3 * np.sin(2 * np.pi * 2 * freq * t)
+        env = np.exp(-t * 3) * np.minimum(1, t * 100)
+    elif kind == "marimba":
+        sig = sum(a * np.sin(2 * np.pi * freq * h * t) for h, a in [(1, 0.6), (4, 0.2), (10, 0.05)])
+        env = np.exp(-t * 8) * np.minimum(1, t * 400)
+    elif kind == "dist":
+        sig = np.clip((np.sin(2 * np.pi * freq * t) + 0.5 * np.sin(2 * np.pi * 2 * freq * t)) * 1.8, -0.8, 0.8)
+        env = np.exp(-t * 3) * np.minimum(1, t * 100)
+    elif kind == "square":
+        sig = np.sign(np.sin(2 * np.pi * freq * t))
+        env = np.exp(-t * 4) * np.minimum(1, t * 300)
+    elif kind == "banjo":
+        sig = sum(a * np.sin(2 * np.pi * freq * h * t) for h, a in [(1, 0.6), (2, 0.3), (3, 0.2), (5, 0.1)])
+        env = np.exp(-t * 9) * np.minimum(1, t * 400)
+    else:
+        sig = sum(a * np.sin(2 * np.pi * freq * h * t) for h, a in [(1, 0.5), (2, 0.2), (3, 0.08)])
+        env = np.minimum(1, t * 8) * np.minimum(1, (dur - t) * 8)
     return sig * env
 
 
@@ -345,9 +372,22 @@ def _snare(dur=0.18):
     return (0.8 * np.random.randn(len(t)) + 0.2 * np.sin(2 * np.pi * 190 * t)) * np.exp(-t * 22)
 
 
+def _tom(dur=0.3, f0=140):
+    t = np.linspace(0, dur, int(SR * dur), endpoint=False)
+    f = f0 * np.exp(-t * 12) + 60
+    return np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 8)
+
+
 def _hihat(dur=0.05):
     t = np.linspace(0, dur, int(SR * dur), endpoint=False)
     return np.random.randn(len(t)) * np.exp(-t * 70)
+
+
+def _add(track, pos, sig, gain):
+    if pos >= len(track):
+        return
+    e = min(pos + len(sig), len(track))
+    track[pos:e] += sig[: e - pos] * gain
 
 
 def make_music(duration, bpm, chords, style):
@@ -356,34 +396,65 @@ def make_music(duration, bpm, chords, style):
     track = np.zeros(n)
     bar = beat * 4
     for i in range(int(np.ceil(duration / bar))):
-        start = int(i * bar * SR)
-        seg = _synth_pad(chords[i % len(chords)], bar)
-        e = min(start + len(seg), n)
-        track[start:e] += seg[: e - start] * 0.55
-    for b in range(int(np.ceil(duration / beat))):
-        pos = int(b * beat * SR)
-        if pos >= n:
-            break
-        bb = b % 4
+        chord = chords[i % len(chords)]
+        base = int(i * bar * SR)
+        if style in ("sad", "disco"):
+            for f in chord:
+                _add(track, base, _tone(f, bar * 0.95, "pad"), 0.45)
         if style == "disco":
-            k = _kick()
-            e = min(pos + len(k), n)
-            track[pos:e] += k[: e - pos] * 0.9
-        elif bb in (0, 2):
-            k = _kick()
-            e = min(pos + len(k), n)
-            track[pos:e] += k[: e - pos] * 0.7
-        if style == "disco" and bb in (1, 3):
-            s = _snare()
-            e = min(pos + len(s), n)
-            track[pos:e] += s[: e - pos] * 0.5
-        if style == "disco":
-            for off in (0.0, beat / 2):
-                hp = int((b * beat + off) * SR)
-                if hp < n:
-                    h = _hihat()
-                    e = min(hp + len(h), n)
-                    track[hp:e] += h[: e - hp] * 0.25
+            for j in range(4):
+                pos = base + int(j * beat * SR)
+                _add(track, pos, _kick(), 0.9)
+                if j in (1, 3):
+                    _add(track, pos, _snare(), 0.5)
+                for off in (0.0, beat / 2):
+                    _add(track, base + int((j * beat + off) * SR), _hihat(), 0.25)
+        elif style == "sad":
+            for j in (0, 2):
+                _add(track, base + int(j * beat * SR), _kick(), 0.6)
+        elif style == "bassbeat":
+            for j in range(4):
+                pos = base + int(j * beat * SR)
+                _add(track, pos, _tone(chord[0] / 2, beat * 0.8, "bass"), 0.6)
+                _add(track, pos, _kick() if j in (0, 2) else _snare(), 0.7)
+        elif style == "marimba":
+            for j in range(8):
+                _add(track, base + int(j * beat / 2 * SR), _tone(chord[j % len(chord)], beat * 0.7, "marimba"), 0.35)
+        elif style == "rock":
+            for j in range(4):
+                pos = base + int(j * beat * SR)
+                for f in (chord[0], chord[0] * 1.5):
+                    _add(track, pos, _tone(f, beat * 0.5, "dist"), 0.3)
+                _add(track, pos, _kick() if j % 2 == 0 else _snare(), 0.6)
+        elif style == "jazz":
+            for j in range(4):
+                pos = base + int(j * beat * SR)
+                _add(track, pos, _tone(chord[j % len(chord)], beat * 0.7, "pluck"), 0.3)
+                if j in (1, 3):
+                    _add(track, pos, _snare(), 0.25)
+        elif style == "country":
+            for j in range(8):
+                _add(track, base + int(j * beat / 2 * SR), _tone(chord[j % len(chord)], beat * 0.5, "banjo"), 0.3)
+            _add(track, base, _kick(), 0.4)
+        elif style == "hiphop":
+            _add(track, base, _kick(), 0.9)
+            _add(track, base + int(beat * 2 * SR), _kick(), 0.9)
+            _add(track, base + int(beat * SR), _snare(), 0.6)
+            _add(track, base + int(beat * 3 * SR), _snare(), 0.6)
+            for j in range(2):
+                _add(track, base + int(j * beat * 2 * SR), _tone(chord[0] / 2, beat * 1.5, "bass"), 0.6)
+        elif style == "bit":
+            for j in range(16):
+                _add(track, base + int(j * beat / 4 * SR), _tone(chord[j % len(chord)], beat * 0.4, "square"), 0.18)
+            _add(track, base, _kick(), 0.5)
+            _add(track, base + int(beat * 2 * SR), _snare(), 0.4)
+        elif style == "ethnic":
+            for j in range(4):
+                pos = base + int(j * beat * SR)
+                _add(track, pos, _kick() if j % 2 == 0 else _tom(0.3, 180), 0.7)
+            for j in range(8):
+                _add(track, base + int(j * beat / 2 * SR), _tom(0.15, 260), 0.25)
+            _add(track, base, _tone(chord[0] / 2, beat * 2, "bass"), 0.5)
     m = float(np.max(np.abs(track))) or 1.0
     return track / m * 0.7
 
@@ -441,8 +512,8 @@ async def generate_sing(text: str, out_path: str, preset_key: str = DEFAULT_PRES
     codec = ["-c:a", "libopus", "-b:a", "64k"] if fmt == "ogg" else ["-c:a", "libmp3lame", "-b:a", "128k"]
     if style in MUSIC_STYLES and np is not None:
         await _ffmpeg(["-i", sang, "-af", filt, "-ar", "44100", fx])
-        bpm, chords = MUSIC_STYLES[style]
-        write_wav(music, make_music(duration + 0.5, bpm, chords, style))
+        bpm, chords, kind = MUSIC_STYLES[style]
+        write_wav(music, make_music(duration + 0.5, bpm, chords, kind))
         await _ffmpeg(["-i", fx, "-i", music, "-filter_complex",
                        "[0:a]volume=1.7[v];[1:a]volume=0.8[m];[v][m]amix=inputs=2:duration=longest:dropout_transition=0",
                        "-c:a", "libmp3lame", "-b:a", "160k", out_path])
