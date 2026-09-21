@@ -141,20 +141,22 @@ body {
 }
 .composer-buttons {
   display: flex;
-  gap: 10px;
-  justify-content: center;
+  gap: 6px;
 }
-.composer-buttons .icon-btn { flex: 1; max-width: 120px; height: 40px; }
-.music-select {
-  flex: 1;
-  max-width: 160px;
+.composer-buttons > * {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
   height: 40px;
+}
+.music-select {
+  width: 100%;
   background: var(--panel);
   color: var(--text);
   border: 1px solid rgba(255,255,255,.1);
   border-radius: 14px;
-  padding: 0 10px;
-  font-size: 13px;
+  padding: 0 6px;
+  font-size: 12px;
   outline: none;
 }
 #input {
