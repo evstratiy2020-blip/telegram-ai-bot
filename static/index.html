@@ -55,11 +55,15 @@
     <main id="messages" class="messages"></main>
 
     <footer class="composer">
-      <button class="icon-btn mic" id="voiceBtn" title="Голос">🎙</button>
-      <button class="icon-btn" id="micBtn" title="Сказать голосом">🎤</button>
-      <button class="icon-btn" id="singBtn" title="Петь">🎵</button>
-      <input id="input" type="text" placeholder="Напиши Боне…" autocomplete="off">
-      <button class="send" id="send" title="Отправить">➤</button>
+      <div class="composer-row">
+        <input id="input" type="text" placeholder="Напиши Боне…" autocomplete="off">
+        <button class="send" id="send" title="Отправить">➤</button>
+      </div>
+      <div class="composer-buttons">
+        <button class="icon-btn mic" id="voiceBtn" title="Голос">🎙</button>
+        <button class="icon-btn" id="micBtn" title="Сказать голосом">🎤</button>
+        <button class="icon-btn" id="singBtn" title="Петь">🎵</button>
+      </div>
     </footer>
   </div>
 
