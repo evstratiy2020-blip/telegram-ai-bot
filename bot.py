@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+import wave
 
 # deploy marker: songs button
 from pathlib import Path
@@ -20,6 +21,11 @@ try:
 except Exception:  # noqa: BLE001
     parselmouth = None
     praat_call = None
+
+try:
+    import numpy as np
+except Exception:  # noqa: BLE001
+    np = None
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
@@ -308,6 +314,88 @@ async def _ffmpeg(args: list[str]) -> None:
 
 SING_SCALE = [262, 294, 330, 294, 392, 330, 294, 262, 330, 294, 262, 220]
 
+SR = 44100
+_C = [261.63, 329.63, 392.00]
+_Am = [220.00, 261.63, 329.63]
+_F = [174.61, 220.00, 261.63]
+_G = [196.00, 246.94, 293.66]
+MAJOR = [_C, _Am, _F, _G]
+SAD = [_Am, _F, _C, _G]
+MUSIC_STYLES = {"sad": (80, SAD), "disco": (118, MAJOR)}
+
+
+def _synth_pad(freqs, dur):
+    t = np.linspace(0, dur, int(SR * dur), endpoint=False)
+    sig = np.zeros_like(t)
+    for f in freqs:
+        sig += 0.5 * np.sin(2 * np.pi * f * t) + 0.2 * np.sin(2 * np.pi * 2 * f * t)
+    sig /= len(freqs)
+    env = np.minimum(1, t * 8) * np.minimum(1, (dur - t) * 8)
+    return sig * env
+
+
+def _kick(dur=0.25):
+    t = np.linspace(0, dur, int(SR * dur), endpoint=False)
+    f = 110 * np.exp(-t * 22) + 45
+    return np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 9)
+
+
+def _snare(dur=0.18):
+    t = np.linspace(0, dur, int(SR * dur), endpoint=False)
+    return (0.8 * np.random.randn(len(t)) + 0.2 * np.sin(2 * np.pi * 190 * t)) * np.exp(-t * 22)
+
+
+def _hihat(dur=0.05):
+    t = np.linspace(0, dur, int(SR * dur), endpoint=False)
+    return np.random.randn(len(t)) * np.exp(-t * 70)
+
+
+def make_music(duration, bpm, chords, style):
+    beat = 60.0 / bpm
+    n = int(SR * duration) + SR
+    track = np.zeros(n)
+    bar = beat * 4
+    for i in range(int(np.ceil(duration / bar))):
+        start = int(i * bar * SR)
+        seg = _synth_pad(chords[i % len(chords)], bar)
+        e = min(start + len(seg), n)
+        track[start:e] += seg[: e - start] * 0.55
+    for b in range(int(np.ceil(duration / beat))):
+        pos = int(b * beat * SR)
+        if pos >= n:
+            break
+        bb = b % 4
+        if style == "disco":
+            k = _kick()
+            e = min(pos + len(k), n)
+            track[pos:e] += k[: e - pos] * 0.9
+        elif bb in (0, 2):
+            k = _kick()
+            e = min(pos + len(k), n)
+            track[pos:e] += k[: e - pos] * 0.7
+        if style == "disco" and bb in (1, 3):
+            s = _snare()
+            e = min(pos + len(s), n)
+            track[pos:e] += s[: e - pos] * 0.5
+        if style == "disco":
+            for off in (0.0, beat / 2):
+                hp = int((b * beat + off) * SR)
+                if hp < n:
+                    h = _hihat()
+                    e = min(hp + len(h), n)
+                    track[hp:e] += h[: e - hp] * 0.25
+    m = float(np.max(np.abs(track))) or 1.0
+    return track / m * 0.7
+
+
+def write_wav(path, data):
+    pcm = (np.clip(data, -1, 1) * 32767).astype(np.int16)
+    with wave.open(path, "w") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        w.writeframes(pcm.tobytes())
+
 
 def _sounding_intervals(snd) -> list:
     tg = praat_call(snd, "To TextGrid (silences)", 100, 0.0, -25.0, 0.08, 0.04, "silent", "sounding")
@@ -322,13 +410,15 @@ def _sounding_intervals(snd) -> list:
     return spans
 
 
-async def generate_sing(text: str, out_path: str, preset_key: str = DEFAULT_PRESET, fmt: str = "mp3") -> None:
+async def generate_sing(text: str, out_path: str, preset_key: str = DEFAULT_PRESET, fmt: str = "mp3", style: str = "none") -> None:
     if parselmouth is None:
         raise RuntimeError("parselmouth unavailable")
     preset = VOICE_PRESETS.get(preset_key, VOICE_PRESETS[DEFAULT_PRESET])
     src = out_path + ".src.mp3"
     wav = out_path + ".src.wav"
     sang = out_path + ".sang.wav"
+    fx = out_path + ".fx.wav"
+    music = out_path + ".music.wav"
     communicate = edge_tts.Communicate(text, preset["voice"], rate="-12%", pitch=preset["pitch"])
     await communicate.save(src)
     await _ffmpeg(["-i", src, "-ac", "1", "-ar", "44100", wav])
@@ -347,9 +437,20 @@ async def generate_sing(text: str, out_path: str, preset_key: str = DEFAULT_PRES
     praat_call([manipulation, pitch_tier], "Replace pitch tier")
     resynth = praat_call(manipulation, "Get resynthesis (overlap-add)")
     resynth.save(sang, "WAV")
-    codec = ["-c:a", "libopus", "-b:a", "64k"] if fmt == "ogg" else ["-c:a", "libmp3lame", "-b:a", "128k"]
     filt = preset.get("fx", FLANGER)
-    await _ffmpeg(["-i", sang, "-af", filt, *codec, out_path])
+    codec = ["-c:a", "libopus", "-b:a", "64k"] if fmt == "ogg" else ["-c:a", "libmp3lame", "-b:a", "128k"]
+    if style in MUSIC_STYLES and np is not None:
+        await _ffmpeg(["-i", sang, "-af", filt, "-ar", "44100", fx])
+        bpm, chords = MUSIC_STYLES[style]
+        write_wav(music, make_music(duration + 0.5, bpm, chords, style))
+        await _ffmpeg(["-i", fx, "-i", music, "-filter_complex",
+                       "[0:a]volume=1.7[v];[1:a]volume=0.8[m];[v][m]amix=inputs=2:duration=longest:dropout_transition=0",
+                       "-c:a", "libmp3lame", "-b:a", "160k", out_path])
+        for p in (fx, music):
+            if os.path.exists(p):
+                os.remove(p)
+    else:
+        await _ffmpeg(["-i", sang, "-af", filt, *codec, out_path])
     for p in (src, wav, sang):
         if os.path.exists(p):
             os.remove(p)
@@ -674,10 +775,13 @@ def run_webhook() -> None:
         voice_key = request.query.get("voice") or DEFAULT_PRESET
         if voice_key not in VOICE_PRESETS:
             voice_key = DEFAULT_PRESET
+        style = request.query.get("style") or "none"
+        if style not in MUSIC_STYLES:
+            style = "none"
         fd, path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
         try:
-            await generate_sing(text, path, voice_key, fmt="mp3")
+            await generate_sing(text, path, voice_key, fmt="mp3", style=style)
             with open(path, "rb") as fh:
                 audio = fh.read()
             return web.Response(body=audio, content_type="audio/mpeg")
