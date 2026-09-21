@@ -84,11 +84,32 @@ ABOUT_TEXT = (
 )
 
 FLANGER = "flanger=delay=8:depth=3:regen=0.2:width=71:speed=0.5"
+RING = "aeval='val(0)*sin(2*PI*55*t)'"
 
 VOICE_PRESETS = {
-    "1": ("Боня", "ru-RU-DmitryNeural", "-20%", "+80Hz", FLANGER),
+    "bonya": {
+        "name": "Боня",
+        "voice": "ru-RU-DmitryNeural",
+        "rate": "-15%",
+        "pitch": "+80Hz",
+        "fx": FLANGER,
+    },
+    "ring": {
+        "name": "Робот-металл",
+        "voice": "ru-RU-DmitryNeural",
+        "rate": "-15%",
+        "pitch": "+60Hz",
+        "fx": RING,
+    },
+    "mono": {
+        "name": "Робот-монотонный",
+        "voice": "ru-RU-DmitryNeural",
+        "rate": "-15%",
+        "pitch": "+60Hz",
+        "mono": 175,
+    },
 }
-DEFAULT_PRESET = "1"
+DEFAULT_PRESET = "bonya"
 
 IMAGE_URL = "https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&enhance=true&nologo=true"
 
@@ -127,8 +148,8 @@ def voice_keyboard() -> InlineKeyboardMarkup:
     items = list(VOICE_PRESETS.items())
     for i in range(0, len(items), 2):
         row = [
-            InlineKeyboardButton(text=name, callback_data=f"voice:{key}")
-            for key, (name, *_rest) in items[i:i + 2]
+            InlineKeyboardButton(text=data["name"], callback_data=f"voice:{key}")
+            for key, data in items[i:i + 2]
         ]
         rows.append(row)
     rows.append([InlineKeyboardButton(text="🔇 Выключить голос", callback_data="voice:off")])
@@ -246,25 +267,34 @@ async def update_memory(messages: list[dict], reply: str) -> None:
         pass
 
 
-async def generate_voice(text: str, out_path: str, voice: str, rate: str, pitch: str, audio_filter: str) -> None:
-    mp3_path = out_path + ".mp3"
-    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-    await communicate.save(mp3_path)
-
-    cmd = [
-        FFMPEG, "-y", "-i", mp3_path,
-        "-af", audio_filter,
-        "-c:a", "libopus", "-b:a", "64k",
-        out_path,
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    await proc.wait()
-    if os.path.exists(mp3_path):
-        os.remove(mp3_path)
+async def generate_voice(text: str, out_path: str, preset_key: str = DEFAULT_PRESET, fmt: str = "ogg") -> None:
+    preset = VOICE_PRESETS.get(preset_key, VOICE_PRESETS[DEFAULT_PRESET])
+    src = out_path + ".src.mp3"
+    communicate = edge_tts.Communicate(text, preset["voice"], rate=preset["rate"], pitch=preset["pitch"])
+    await communicate.save(src)
+    codec = ["-c:a", "libopus", "-b:a", "64k"] if fmt == "ogg" else ["-c:a", "libmp3lame", "-b:a", "48k", "-ar", "16000"]
+    if "mono" in preset and parselmouth is not None:
+        wav = out_path + ".src.wav"
+        mono_wav = out_path + ".mono.wav"
+        await _ffmpeg(["-i", src, "-ac", "1", "-ar", "44100", wav])
+        snd = parselmouth.Sound(wav)
+        dur = snd.get_total_duration()
+        manip = praat_call(snd, "To Manipulation", 0.01, 60, 700)
+        tier = praat_call("Create PitchTier", "m", 0.0, dur)
+        praat_call(tier, "Add point", 0.0, float(preset["mono"]))
+        praat_call(tier, "Add point", dur, float(preset["mono"]))
+        praat_call([manip, tier], "Replace pitch tier")
+        res = praat_call(manip, "Get resynthesis (overlap-add)")
+        res.save(mono_wav, "WAV")
+        await _ffmpeg(["-i", mono_wav, *codec, out_path])
+        for p in (src, wav, mono_wav):
+            if os.path.exists(p):
+                os.remove(p)
+        return
+    filt = preset.get("fx", FLANGER)
+    await _ffmpeg(["-i", src, "-af", filt, *codec, out_path])
+    if os.path.exists(src):
+        os.remove(src)
 
 
 async def _ffmpeg(args: list[str]) -> None:
@@ -274,18 +304,6 @@ async def _ffmpeg(args: list[str]) -> None:
         stderr=asyncio.subprocess.DEVNULL,
     )
     await proc.wait()
-
-
-async def generate_voice_mp3(text: str, out_path: str, voice: str, rate: str, pitch: str, audio_filter: str, raw: bool = False) -> None:
-    src = out_path + ".src.mp3"
-    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-    await communicate.save(src)
-    if raw:
-        os.replace(src, out_path)
-        return
-    await _ffmpeg(["-i", src, "-af", audio_filter, "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "48k", out_path])
-    if os.path.exists(src):
-        os.remove(src)
 
 
 SING_SCALE = [262, 294, 330, 294, 392, 330, 294, 262, 330, 294, 262, 220]
@@ -304,13 +322,14 @@ def _sounding_intervals(snd) -> list:
     return spans
 
 
-async def generate_sing(text: str, out_path: str, voice: str, pitch: str, audio_filter: str, fmt: str = "mp3") -> None:
+async def generate_sing(text: str, out_path: str, preset_key: str = DEFAULT_PRESET, fmt: str = "mp3") -> None:
     if parselmouth is None:
         raise RuntimeError("parselmouth unavailable")
+    preset = VOICE_PRESETS.get(preset_key, VOICE_PRESETS[DEFAULT_PRESET])
     src = out_path + ".src.mp3"
     wav = out_path + ".src.wav"
     sang = out_path + ".sang.wav"
-    communicate = edge_tts.Communicate(text, voice, rate="-12%", pitch=pitch)
+    communicate = edge_tts.Communicate(text, preset["voice"], rate="-12%", pitch=preset["pitch"])
     await communicate.save(src)
     await _ffmpeg(["-i", src, "-ac", "1", "-ar", "44100", wav])
     snd = parselmouth.Sound(wav)
@@ -329,7 +348,8 @@ async def generate_sing(text: str, out_path: str, voice: str, pitch: str, audio_
     resynth = praat_call(manipulation, "Get resynthesis (overlap-add)")
     resynth.save(sang, "WAV")
     codec = ["-c:a", "libopus", "-b:a", "64k"] if fmt == "ogg" else ["-c:a", "libmp3lame", "-b:a", "128k"]
-    await _ffmpeg(["-i", sang, "-af", audio_filter, *codec, out_path])
+    filt = preset.get("fx", FLANGER)
+    await _ffmpeg(["-i", sang, "-af", filt, *codec, out_path])
     for p in (src, wav, sang):
         if os.path.exists(p):
             os.remove(p)
@@ -382,8 +402,8 @@ async def sing_reply(message: Message, text: str) -> None:
     try:
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
             path = f.name
-        _name, voice, _rate, pitch, audio_filter = VOICE_PRESETS[DEFAULT_PRESET]
-        await generate_sing(text, path, voice, pitch, audio_filter, fmt="ogg")
+        key = voice_settings.get(message.from_user.id, DEFAULT_PRESET)
+        await generate_sing(text, path, key, fmt="ogg")
         await message.answer_voice(FSInputFile(path))
         os.remove(path)
         await sent.delete()
@@ -398,9 +418,7 @@ async def start(message: Message) -> None:
 
 @dp.message(Command("voice"))
 async def voice_menu(message: Message) -> None:
-    voice_settings[message.from_user.id] = DEFAULT_PRESET
-    voice_enabled.add(message.from_user.id)
-    await message.answer("Включил голос. Теперь отвечаю голосом. 🎙")
+    await message.answer("Выбери голос Бони:", reply_markup=voice_keyboard())
 
 
 @dp.message(Command("img"))
@@ -414,9 +432,7 @@ async def img_command(message: Message) -> None:
 
 @dp.message(F.text == "🎙 Голос")
 async def kb_voice(message: Message) -> None:
-    voice_settings[message.from_user.id] = DEFAULT_PRESET
-    voice_enabled.add(message.from_user.id)
-    await message.answer("Включил голос. Теперь отвечаю голосом. 🎙")
+    await message.answer("Выбери голос Бони:", reply_markup=voice_keyboard())
 
 
 @dp.message(F.text == "🖼 Картинка")
@@ -464,7 +480,7 @@ async def voice_callback(cq: CallbackQuery) -> None:
     elif action in VOICE_PRESETS:
         voice_settings[uid] = action
         voice_enabled.add(uid)
-        name, voice, rate, pitch, audio_filter = VOICE_PRESETS[action]
+        name = VOICE_PRESETS[action]["name"]
         await cq.message.edit_text(
             f"Выбран голос: {name}. Слушай пример ниже:",
             reply_markup=voice_keyboard(),
@@ -472,7 +488,7 @@ async def voice_callback(cq: CallbackQuery) -> None:
         try:
             with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
                 audio_path = f.name
-            await generate_voice("Привет! Это мой голос.", audio_path, voice, rate, pitch, audio_filter)
+            await generate_voice("Привет! Это мой голос.", audio_path, action, fmt="ogg")
             await cq.message.answer_voice(FSInputFile(audio_path))
             os.remove(audio_path)
         except Exception:
@@ -521,10 +537,9 @@ async def chat(message: Message) -> None:
         if uid in voice_enabled:
             try:
                 key = voice_settings.get(uid, DEFAULT_PRESET)
-                _name, voice, rate, pitch, audio_filter = VOICE_PRESETS[key]
                 with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
                     audio_path = f.name
-                await generate_voice(reply[:300], audio_path, voice, rate, pitch, audio_filter)
+                await generate_voice(reply[:300], audio_path, key, fmt="ogg")
                 await message.answer_voice(FSInputFile(audio_path))
                 os.remove(audio_path)
             except Exception:
@@ -584,11 +599,11 @@ def run_webhook() -> None:
         preset = data.get("voice") or DEFAULT_PRESET
         if preset not in VOICE_PRESETS:
             preset = DEFAULT_PRESET
-        _name, voice, rate, pitch, audio_filter = VOICE_PRESETS[preset]
+        _name = VOICE_PRESETS[preset]["name"]
         fd, path = tempfile.mkstemp(suffix=".ogg")
         os.close(fd)
         try:
-            await generate_voice(text, path, voice, rate, pitch, audio_filter)
+            await generate_voice(text, path, preset, fmt="ogg")
             with open(path, "rb") as fh:
                 audio = fh.read()
             return web.Response(body=audio, content_type="audio/ogg")
@@ -623,11 +638,13 @@ def run_webhook() -> None:
         text = (request.query.get("text") or "").strip()[:300]
         if not text:
             return web.json_response({"error": "no text"}, status=400)
-        _name, voice, rate, pitch, audio_filter = VOICE_PRESETS[DEFAULT_PRESET]
+        voice_key = request.query.get("voice") or DEFAULT_PRESET
+        if voice_key not in VOICE_PRESETS:
+            voice_key = DEFAULT_PRESET
         fd, path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
         try:
-            await generate_voice_mp3(text, path, voice, rate, pitch, audio_filter, raw=bool(request.query.get("raw")))
+            await generate_voice(text, path, voice_key, fmt="mp3")
             with open(path, "rb") as fh:
                 audio = fh.read()
             return web.Response(body=audio, content_type="audio/mpeg")
@@ -643,11 +660,13 @@ def run_webhook() -> None:
         text = (request.query.get("text") or "").strip()[:300]
         if not text:
             return web.json_response({"error": "no text"}, status=400)
-        _name, voice, _rate, pitch, audio_filter = VOICE_PRESETS[DEFAULT_PRESET]
+        voice_key = request.query.get("voice") or DEFAULT_PRESET
+        if voice_key not in VOICE_PRESETS:
+            voice_key = DEFAULT_PRESET
         fd, path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
         try:
-            await generate_sing(text, path, voice, pitch, audio_filter, fmt="mp3")
+            await generate_sing(text, path, voice_key, fmt="mp3")
             with open(path, "rb") as fh:
                 audio = fh.read()
             return web.Response(body=audio, content_type="audio/mpeg")
