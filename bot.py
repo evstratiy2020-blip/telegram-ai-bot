@@ -187,9 +187,11 @@ def voice_keyboard() -> InlineKeyboardMarkup:
 
 MUSIC_NAMES = {
     "none": "Без музыки",
+    "pop": "Поп",
+    "ballad": "Баллада",
+    "rock": "Рок",
     "bassbeat": "Бас + бит",
     "marimba": "Маримба",
-    "rock": "Рок",
     "jazz": "Джаз",
     "country": "Кантри",
     "hiphop": "Хип-хоп",
@@ -477,7 +479,6 @@ MUSIC_STYLES = {
     "disco": (118, MAJOR, "disco"),
     "bassbeat": (120, MAJOR, "bassbeat"),
     "marimba": (112, MAJOR, "marimba"),
-    "rock": (140, MAJOR, "rock"),
     "jazz": (120, MAJOR, "jazz"),
     "country": (116, MAJOR, "country"),
     "hiphop": (90, MAJOR, "hiphop"),
@@ -619,6 +620,78 @@ def write_wav(path, data):
         w.writeframes(pcm.tobytes())
 
 
+_N = {
+    "C3": 130.81, "D3": 146.83, "E3": 164.81, "F3": 174.61, "G3": 196.00, "A3": 220.00, "B3": 246.94,
+    "C4": 261.63, "D4": 293.66, "E4": 329.63, "F4": 349.23, "G4": 392.00, "A4": 440.00, "B4": 493.88,
+}
+_MAJ = [["C4", "E4", "G4"], ["G3", "B3", "D4"], ["A3", "C4", "E4"], ["F3", "A3", "C4"]]
+_MIN = [["A3", "C4", "E4"], ["F3", "A3", "C4"], ["C4", "E4", "G4"], ["G3", "B3", "D4"]]
+RICH_STYLES = {"pop": (110, _MAJ, "pop"), "ballad": (72, _MIN, "ballad"), "rock": (132, _MAJ, "rock")}
+
+
+def _h(freq, dur, harms):
+    t = np.linspace(0, dur, int(SR * dur), endpoint=False)
+    return sum(a * np.sin(2 * np.pi * freq * h * t) for h, a in harms)
+
+
+def _piano(freq, dur):
+    sig = _h(freq, dur, ((1, 1.0), (2, 0.5), (3, 0.25), (4, 0.12), (5, 0.06)))
+    n = len(sig)
+    return sig * np.exp(-np.linspace(0, 4, n)) * np.minimum(1, np.linspace(0, 1, n) * 60)
+
+
+def _pad2(freq, dur):
+    sig = _h(freq, dur, ((1, 1.0), (2, 0.35), (3, 0.15)))
+    n = len(sig)
+    return sig * np.minimum(1, np.linspace(0, 1, n) * 8) * np.minimum(1, np.linspace(1, 0, n) * 8)
+
+
+def _bass2(freq, dur):
+    sig = _h(freq, dur, ((1, 1.0), (2, 0.5), (3, 0.2)))
+    n = len(sig)
+    return sig * np.exp(-np.linspace(0, 2.5, n)) * np.minimum(1, np.linspace(0, 1, n) * 80)
+
+
+def make_rich_music(duration, bpm, prog, kind):
+    beat = 60.0 / bpm
+    n = int(SR * duration) + SR
+    track = np.zeros(n)
+    bar = beat * 4
+    for i in range(int(np.ceil(duration / bar))):
+        chord = prog[i % len(prog)]
+        base = int(i * bar * SR)
+        for note in chord:
+            _add(track, base, _pad2(_N[note], bar * 0.98), 0.12)
+        if kind in ("pop", "ballad"):
+            pattern = [0, 1, 2, 1, 2, 1, 0, 1]
+            for j, idx in enumerate(pattern):
+                _add(track, base + int(j * beat / 2 * SR), _piano(_N[chord[idx]] * 2, beat * 0.9), 0.16)
+        for j in range(8):
+            _add(track, base + int(j * beat / 2 * SR), _bass2(_N[chord[0]] / 2, beat * 0.45), 0.5)
+    for b in range(int(np.ceil(duration / beat))):
+        pos = int(b * beat * SR)
+        bb = b % 4
+        if kind == "pop":
+            _add(track, pos, _kick(), 0.9)
+            if bb in (1, 3):
+                _add(track, pos, _snare(), 0.55)
+            for off in (0.0, beat / 2):
+                _add(track, int((b * beat + off) * SR), _hihat(), 0.22)
+        elif kind == "ballad":
+            if bb in (0, 2):
+                _add(track, pos, _kick(), 0.6)
+            if bb in (1, 3):
+                _add(track, pos, _snare(), 0.35)
+        elif kind == "rock":
+            _add(track, pos, _kick(), 0.95)
+            if bb in (1, 3):
+                _add(track, pos, _snare(), 0.6)
+            for off in (0.0, beat / 2):
+                _add(track, int((b * beat + off) * SR), _hihat(), 0.25)
+    m = float(np.max(np.abs(track))) or 1.0
+    return track / m * 0.85
+
+
 def _sounding_intervals(snd) -> list:
     tg = praat_call(snd, "To TextGrid (silences)", 100, 0.0, -25.0, 0.08, 0.04, "silent", "sounding")
     n = praat_call(tg, "Get number of intervals", 1)
@@ -660,7 +733,17 @@ async def generate_sing(text: str, out_path: str, preset_key: str = DEFAULT_PRES
     resynth.save(sang, "WAV")
     filt = preset.get("fx", FLANGER)
     codec = ["-c:a", "libopus", "-b:a", "64k"] if fmt == "ogg" else ["-c:a", "libmp3lame", "-b:a", "128k"]
-    if style in MUSIC_STYLES and np is not None:
+    if style in RICH_STYLES and np is not None:
+        await _ffmpeg(["-i", sang, "-af", filt, "-ar", "44100", fx])
+        bpm, prog, kind = RICH_STYLES[style]
+        write_wav(music, make_rich_music(duration + 0.5, bpm, prog, kind))
+        await _ffmpeg(["-i", fx, "-i", music, "-filter_complex",
+                       "[0:a]volume=1.7[v];[1:a]volume=0.8[m];[v][m]amix=inputs=2:duration=longest:dropout_transition=0",
+                       *codec, out_path])
+        for p in (fx, music):
+            if os.path.exists(p):
+                os.remove(p)
+    elif style in MUSIC_STYLES and np is not None:
         await _ffmpeg(["-i", sang, "-af", filt, "-ar", "44100", fx])
         bpm, chords, kind = MUSIC_STYLES[style]
         write_wav(music, make_music(duration + 0.5, bpm, chords, kind))
@@ -1182,7 +1265,7 @@ def run_webhook() -> None:
         if voice_key not in VOICE_PRESETS:
             voice_key = DEFAULT_PRESET
         style = request.query.get("style") or "none"
-        if style not in MUSIC_STYLES:
+        if style not in MUSIC_STYLES and style not in RICH_STYLES:
             style = "none"
         fd, path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
