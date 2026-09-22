@@ -151,6 +151,7 @@ sing_mode: set[int] = set()
 music_settings: dict[int, str] = {}
 song_drafts: dict[int, str] = {}
 song_edit: set[int] = set()
+last_file: dict[int, str] = {}
 memory_facts: list[str] = []
 
 
@@ -937,6 +938,7 @@ async def song_edit_cb(cq: CallbackQuery) -> None:
 @dp.message(Command("new"))
 async def clear_history(message: Message) -> None:
     history.pop(message.from_user.id, None)
+    last_file.pop(message.from_user.id, None)
     await message.answer("История диалога очищена.")
 
 
@@ -966,6 +968,7 @@ async def handle_document(message: Message) -> None:
             await sent.edit_text("Не удалось извлечь текст из файла 😔 (поддерживаю txt, pdf, docx)")
             return
         text = text[:8000]
+        last_file[message.from_user.id] = text
         question = (message.caption or "").strip() or "Кратко перескажи, что в этом файле."
         reply = await ask_llm([{"role": "user", "content": f"Содержимое файла:\n{text}\n\nВопрос: {question}"}])
         await sent.edit_text(strip_markdown(reply or "")[:4000])
@@ -1035,7 +1038,11 @@ async def chat(message: Message) -> None:
     sent = await message.answer("Думаю...")
 
     try:
-        reply = await ask_llm(hist)
+        msgs = hist
+        ctx = last_file.get(uid)
+        if ctx:
+            msgs = [{"role": "user", "content": "Файл пользователя (расписание/документ):\n" + ctx[:6000]}] + hist
+        reply = await ask_llm(msgs)
         if not reply:
             reply = "(пустой ответ от модели)"
         reply = strip_markdown(reply)
