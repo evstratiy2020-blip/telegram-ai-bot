@@ -127,6 +127,8 @@ voice_settings: dict[int, str] = {}
 image_mode: set[int] = set()
 sing_mode: set[int] = set()
 music_settings: dict[int, str] = {}
+song_drafts: dict[int, str] = {}
+song_edit: set[int] = set()
 memory_facts: list[str] = []
 
 
@@ -664,26 +666,31 @@ async def draw_image(message: Message, prompt: str) -> None:
 async def sing_reply(message: Message, text: str) -> None:
     sent = await message.answer("🎼 Сочиняю песню…")
     try:
-        lyrics = await ask_llm([{
-            "role": "user",
-            "content": (
-                "Сочини короткую весёлую песенку (2-4 строки) на тему: " + text +
-                ". Верни только текст песенки, без пояснений и без кавычек."
-            ),
-        }])
-        lyrics = strip_markdown(lyrics or text).strip()[:300]
+        lyrics = await compose_song(text)
         if not lyrics:
             lyrics = text[:300]
-        key = voice_settings.get(message.from_user.id, DEFAULT_PRESET)
-        style = music_settings.get(message.from_user.id, "none")
-        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
-            path = f.name
-        await generate_sing(lyrics, path, key, fmt="ogg", style=style)
-        await sent.edit_text(f"🎼 {lyrics}")
-        await message.answer_voice(FSInputFile(path))
-        os.remove(path)
+        song_drafts[message.from_user.id] = lyrics
+        await sent.edit_text(f"🎼 {lyrics}", reply_markup=song_keyboard())
     except Exception as exc:
-        await sent.edit_text(f"Не получилось спеть: {exc}")
+        await sent.edit_text(f"Не получилось сочинить: {exc}")
+
+
+def song_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="▶️ Запуск", callback_data="song:play"),
+        InlineKeyboardButton(text="✏️ Доработать", callback_data="song:edit"),
+    ]])
+
+
+async def compose_song(topic: str) -> str:
+    reply = await ask_llm([{
+        "role": "user",
+        "content": (
+            "Сочини короткую весёлую песенку (2-4 строки) на тему: " + topic +
+            ". Верни только текст песенки, без пояснений и без кавычек."
+        ),
+    }])
+    return strip_markdown(reply or "").strip()[:300]
 
 
 @dp.message(CommandStart())
@@ -792,6 +799,35 @@ async def music_callback(cq: CallbackQuery) -> None:
     await cq.answer()
 
 
+@dp.callback_query(lambda c: c.data == "song:play")
+async def song_play(cq: CallbackQuery) -> None:
+    uid = cq.from_user.id
+    lyrics = song_drafts.get(uid)
+    await cq.answer()
+    if not lyrics:
+        await cq.message.answer("Нет текста для песни. Напиши тему заново.")
+        return
+    msg = await cq.message.answer("🎼 Пою…")
+    try:
+        key = voice_settings.get(uid, DEFAULT_PRESET)
+        style = music_settings.get(uid, "none")
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+            path = f.name
+        await generate_sing(lyrics, path, key, fmt="ogg", style=style)
+        await msg.delete()
+        await cq.message.answer_voice(FSInputFile(path))
+        os.remove(path)
+    except Exception as exc:
+        await msg.edit_text(f"Не получилось спеть: {exc}")
+
+
+@dp.callback_query(lambda c: c.data == "song:edit")
+async def song_edit_cb(cq: CallbackQuery) -> None:
+    song_edit.add(cq.from_user.id)
+    await cq.answer()
+    await cq.message.answer("✏️ Напиши, что доработать (например: «сделай длиннее», «добавь про море»).")
+
+
 @dp.message(Command("new"))
 async def clear_history(message: Message) -> None:
     history.pop(message.from_user.id, None)
@@ -860,6 +896,26 @@ async def chat(message: Message) -> None:
         if prompt:
             await draw_image(message, prompt)
             return
+    if uid in song_edit:
+        song_edit.discard(uid)
+        instr = (message.text or "").strip()
+        prev = song_drafts.get(uid, "")
+        if instr:
+            sent = await message.answer("🎼 Дорабатываю…")
+            try:
+                reply = await ask_llm([{
+                    "role": "user",
+                    "content": (
+                        "Вот песенка:\n" + prev + "\n\nИзмени её так: " + instr +
+                        ". Верни только новый текст песенки, без пояснений и кавычек."
+                    ),
+                }])
+                lyrics = strip_markdown(reply or "").strip()[:300] or prev
+                song_drafts[uid] = lyrics
+                await sent.edit_text(f"🎼 {lyrics}", reply_markup=song_keyboard())
+            except Exception as exc:
+                await sent.edit_text(f"Ошибка: {exc}")
+        return
     if uid in sing_mode:
         text = (message.text or "").strip()
         if text:
