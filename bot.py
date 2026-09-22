@@ -98,22 +98,29 @@ FLANGER = "flanger=delay=8:depth=3:regen=0.2:width=71:speed=0.5"
 RING = "aeval='val(0)*sin(2*PI*55*t)'"
 
 VOICE_PRESETS = {
-    "bonya": {
-        "name": "Боня",
+    "male": {
+        "name": "Мужской",
         "voice": "ru-RU-DmitryNeural",
         "rate": "-15%",
-        "pitch": "+80Hz",
-        "fx": FLANGER,
+        "pitch": "+0Hz",
+        "fx": "aecho=0.8:0.7:40:0.15",
     },
-    "mono": {
-        "name": "Робот-монотонный",
+    "male_low": {
+        "name": "Мужской низкий",
         "voice": "ru-RU-DmitryNeural",
         "rate": "-15%",
-        "pitch": "+60Hz",
-        "mono": 175,
+        "pitch": "-50Hz",
+        "fx": "aecho=0.8:0.7:40:0.15",
+    },
+    "female": {
+        "name": "Женский",
+        "voice": "ru-RU-SvetlanaNeural",
+        "rate": "-15%",
+        "pitch": "+0Hz",
+        "fx": "aecho=0.8:0.7:40:0.15",
     },
 }
-DEFAULT_PRESET = "bonya"
+DEFAULT_PRESET = "male"
 
 IMAGE_URL = "https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&enhance=true&nologo=true"
 
