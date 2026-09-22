@@ -693,6 +693,20 @@ async def compose_song(topic: str) -> str:
     return strip_markdown(reply or "").strip()[:300]
 
 
+async def voice_reply(message: Message, text: str) -> None:
+    sent = await message.answer("🔊 Озвучиваю…")
+    try:
+        key = voice_settings.get(message.from_user.id, DEFAULT_PRESET)
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+            path = f.name
+        await generate_voice(text[:300], path, key, fmt="ogg")
+        await sent.delete()
+        await message.answer_voice(FSInputFile(path))
+        os.remove(path)
+    except Exception as exc:
+        await sent.edit_text(f"Не получилось озвучить: {exc}")
+
+
 @dp.message(CommandStart())
 async def start(message: Message) -> None:
     await message.answer(ABOUT_TEXT, reply_markup=main_keyboard())
@@ -921,6 +935,14 @@ async def chat(message: Message) -> None:
         if text:
             await sing_reply(message, text)
             return
+    text0 = (message.text or "").strip()
+    tl = text0.lower()
+    if any(w in tl for w in ("спой", "песн", "стих", "сочин")):
+        await sing_reply(message, text0)
+        return
+    if "озвуч" in tl:
+        await voice_reply(message, text0)
+        return
     hist = get_history(uid)
     hist.append({"role": "user", "content": message.text or ""})
     hist = hist[-HISTORY_LIMIT:]
