@@ -662,16 +662,26 @@ async def draw_image(message: Message, prompt: str) -> None:
 
 
 async def sing_reply(message: Message, text: str) -> None:
-    sent = await message.answer("🎼 Пою…")
+    sent = await message.answer("🎼 Сочиняю песню…")
     try:
-        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
-            path = f.name
+        lyrics = await ask_llm([{
+            "role": "user",
+            "content": (
+                "Сочини короткую весёлую песенку (2-4 строки) на тему: " + text +
+                ". Верни только текст песенки, без пояснений и без кавычек."
+            ),
+        }])
+        lyrics = strip_markdown(lyrics or text).strip()[:300]
+        if not lyrics:
+            lyrics = text[:300]
         key = voice_settings.get(message.from_user.id, DEFAULT_PRESET)
         style = music_settings.get(message.from_user.id, "none")
-        await generate_sing(text, path, key, fmt="ogg", style=style)
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+            path = f.name
+        await generate_sing(lyrics, path, key, fmt="ogg", style=style)
+        await sent.edit_text(f"🎼 {lyrics}")
         await message.answer_voice(FSInputFile(path))
         os.remove(path)
-        await sent.delete()
     except Exception as exc:
         await sent.edit_text(f"Не получилось спеть: {exc}")
 
@@ -720,7 +730,7 @@ async def kb_sing(message: Message) -> None:
     else:
         sing_mode.add(uid)
         style = MUSIC_NAMES.get(music_settings.get(uid, "none"), "Без музыки")
-        await message.answer(f"🎼 Режим песен включён! Музыка: {style}.\nНапиши любой текст — спою его. Сменить музыку: /music")
+        await message.answer(f"🎼 Режим песен включён! Музыка: {style}.\nНапиши тему — сочиню песенку и спою её. Сменить музыку: /music")
 
 
 @dp.message(F.text == "🎶 Музыка")
