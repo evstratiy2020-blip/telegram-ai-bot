@@ -737,6 +737,23 @@ def song_keyboard() -> InlineKeyboardMarkup:
     ]])
 
 
+SCHEDULE_PROMPT = (
+    "Ты — помощник, который разбирает письма от канцелярии монастыря (Киево-Печерская лавра). "
+    "Из текста письма извлеки расписание служений. Ответь кратко и структурированно строками:\n"
+    "📅 Дата:\n🕐 Время:\n⛪ Место (храм/праздник):\n🕯 Служба:\n👥 Сослужащие (с кем служит архидиакон Евстратий):\n"
+    "Если чего-то нет в письме — поставь «—». Не выдумывай. Не добавляй лишнего текста."
+)
+
+
+async def parse_schedule(message: Message, text: str) -> None:
+    sent = await message.answer("📄 Разбираю письмо…")
+    try:
+        reply = await ask_llm([{"role": "user", "content": SCHEDULE_PROMPT + "\n\nПисьмо:\n" + text}])
+        await sent.edit_text(strip_markdown(reply or "")[:4000])
+    except Exception as exc:
+        await sent.edit_text(f"Ошибка разбора: {exc}")
+
+
 async def compose_song(topic: str) -> str:
     reply = await ask_llm([{
         "role": "user",
@@ -1006,6 +1023,9 @@ async def chat(message: Message) -> None:
         return
     if "озвуч" in tl:
         await voice_reply(message, text0)
+        return
+    if any(w in tl for w in ("разбери письмо", "разбери лист", "розбери лист", "разбери расписание", "разбери розклад", "канцеляр", "розклад служ", "расписание служ")):
+        await parse_schedule(message, text0)
         return
     hist = get_history(uid)
     hist.append({"role": "user", "content": message.text or ""})
