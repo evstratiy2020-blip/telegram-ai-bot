@@ -378,11 +378,23 @@ async def update_memory(messages: list[dict], reply: str) -> None:
         pass
 
 
+async def _tts_save(text: str, voice: str, rate: str, pitch: str, out: str) -> None:
+    last = None
+    for _attempt in range(3):
+        try:
+            await edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).save(out)
+            if os.path.exists(out) and os.path.getsize(out) > 0:
+                return
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+        await asyncio.sleep(1.0)
+    raise last or RuntimeError("edge-tts: no audio")
+
+
 async def generate_voice(text: str, out_path: str, preset_key: str = DEFAULT_PRESET, fmt: str = "ogg") -> None:
     preset = VOICE_PRESETS.get(preset_key, VOICE_PRESETS[DEFAULT_PRESET])
     src = out_path + ".src.mp3"
-    communicate = edge_tts.Communicate(clean_tts(text) or "…", preset["voice"], rate=preset["rate"], pitch=preset["pitch"])
-    await communicate.save(src)
+    await _tts_save(clean_tts(text) or "…", preset["voice"], preset["rate"], preset["pitch"], src)
     codec = ["-c:a", "libopus", "-b:a", "64k"] if fmt == "ogg" else ["-c:a", "libmp3lame", "-b:a", "48k", "-ar", "16000"]
     if "mono" in preset and parselmouth is not None:
         wav = out_path + ".src.wav"
@@ -597,8 +609,7 @@ async def generate_sing(text: str, out_path: str, preset_key: str = DEFAULT_PRES
     sang = out_path + ".sang.wav"
     fx = out_path + ".fx.wav"
     music = out_path + ".music.wav"
-    communicate = edge_tts.Communicate(clean_tts(text) or "…", preset["voice"], rate="-12%", pitch=preset["pitch"])
-    await communicate.save(src)
+    await _tts_save(clean_tts(text) or "…", preset["voice"], "-12%", preset["pitch"], src)
     await _ffmpeg(["-i", src, "-ac", "1", "-ar", "44100", wav])
     snd = parselmouth.Sound(wav)
     duration = snd.get_total_duration()
