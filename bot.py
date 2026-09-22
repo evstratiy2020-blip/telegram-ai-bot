@@ -119,6 +119,20 @@ VOICE_PRESETS = {
         "pitch": "+0Hz",
         "fx": "aecho=0.8:0.7:40:0.15",
     },
+    "bonya": {
+        "name": "Боня",
+        "voice": "ru-RU-DmitryNeural",
+        "rate": "-15%",
+        "pitch": "+80Hz",
+        "fx": FLANGER,
+    },
+    "mono": {
+        "name": "Робот-монотонный",
+        "voice": "ru-RU-DmitryNeural",
+        "rate": "-15%",
+        "pitch": "+60Hz",
+        "mono": 175,
+    },
 }
 DEFAULT_PRESET = "male"
 
