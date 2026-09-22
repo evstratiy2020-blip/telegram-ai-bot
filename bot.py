@@ -693,6 +693,26 @@ async def compose_song(topic: str) -> str:
     return strip_markdown(reply or "").strip()[:300]
 
 
+async def revise_song(message: Message, instr: str) -> None:
+    uid = message.from_user.id
+    prev = song_drafts.get(uid, "")
+    sent = await message.answer("🎼 Дорабатываю…")
+    try:
+        reply = await ask_llm([{
+            "role": "user",
+            "content": (
+                "Ты редактор песен. Вот текст песенки:\n" + prev +
+                "\n\nЗадача: " + instr +
+                "\nИзмени именно то, что просят, остальное сохрани. Верни только новый текст песенки, без пояснений."
+            ),
+        }])
+        lyrics = strip_markdown(reply or "").strip()[:300] or prev
+        song_drafts[uid] = lyrics
+        await sent.edit_text(f"🎼 {lyrics}", reply_markup=song_keyboard())
+    except Exception as exc:
+        await sent.edit_text(f"Ошибка: {exc}")
+
+
 async def voice_reply(message: Message, text: str) -> None:
     sent = await message.answer("🔊 Озвучиваю…")
     try:
@@ -913,22 +933,8 @@ async def chat(message: Message) -> None:
     if uid in song_edit:
         song_edit.discard(uid)
         instr = (message.text or "").strip()
-        prev = song_drafts.get(uid, "")
         if instr:
-            sent = await message.answer("🎼 Дорабатываю…")
-            try:
-                reply = await ask_llm([{
-                    "role": "user",
-                    "content": (
-                        "Вот песенка:\n" + prev + "\n\nИзмени её так: " + instr +
-                        ". Верни только новый текст песенки, без пояснений и кавычек."
-                    ),
-                }])
-                lyrics = strip_markdown(reply or "").strip()[:300] or prev
-                song_drafts[uid] = lyrics
-                await sent.edit_text(f"🎼 {lyrics}", reply_markup=song_keyboard())
-            except Exception as exc:
-                await sent.edit_text(f"Ошибка: {exc}")
+            await revise_song(message, instr)
         return
     if uid in sing_mode:
         text = (message.text or "").strip()
@@ -937,6 +943,9 @@ async def chat(message: Message) -> None:
             return
     text0 = (message.text or "").strip()
     tl = text0.lower()
+    if song_drafts.get(uid) and any(w in tl for w in ("доработ", "измен", "передел", "поправ", "допиши", "добавь")):
+        await revise_song(message, text0)
+        return
     if any(w in tl for w in ("спой", "песн", "стих", "сочин")):
         await sing_reply(message, text0)
         return
