@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+import unicodedata
 import wave
 
 # deploy marker: music styles v2
@@ -259,6 +260,18 @@ def get_webapp_user_id(init_data: str) -> int | None:
     return user.get("id")
 
 
+def clean_tts(text: str) -> str:
+    out = []
+    for ch in text:
+        if ch == "\n":
+            out.append(". ")
+            continue
+        cat = unicodedata.category(ch)
+        if cat[0] in ("L", "N") or ch in " .,!?-—:;'\"()":
+            out.append(ch)
+    return "".join(out).strip()
+
+
 def extract_text(path: str, name: str) -> str:
     lower = name.lower()
     if lower.endswith(".pdf"):
@@ -368,7 +381,7 @@ async def update_memory(messages: list[dict], reply: str) -> None:
 async def generate_voice(text: str, out_path: str, preset_key: str = DEFAULT_PRESET, fmt: str = "ogg") -> None:
     preset = VOICE_PRESETS.get(preset_key, VOICE_PRESETS[DEFAULT_PRESET])
     src = out_path + ".src.mp3"
-    communicate = edge_tts.Communicate(text, preset["voice"], rate=preset["rate"], pitch=preset["pitch"])
+    communicate = edge_tts.Communicate(clean_tts(text) or "…", preset["voice"], rate=preset["rate"], pitch=preset["pitch"])
     await communicate.save(src)
     codec = ["-c:a", "libopus", "-b:a", "64k"] if fmt == "ogg" else ["-c:a", "libmp3lame", "-b:a", "48k", "-ar", "16000"]
     if "mono" in preset and parselmouth is not None:
@@ -584,7 +597,7 @@ async def generate_sing(text: str, out_path: str, preset_key: str = DEFAULT_PRES
     sang = out_path + ".sang.wav"
     fx = out_path + ".fx.wav"
     music = out_path + ".music.wav"
-    communicate = edge_tts.Communicate(text, preset["voice"], rate="-12%", pitch=preset["pitch"])
+    communicate = edge_tts.Communicate(clean_tts(text) or "…", preset["voice"], rate="-12%", pitch=preset["pitch"])
     await communicate.save(src)
     await _ffmpeg(["-i", src, "-ac", "1", "-ar", "44100", wav])
     snd = parselmouth.Sound(wav)
