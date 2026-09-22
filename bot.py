@@ -134,7 +134,7 @@ VOICE_PRESETS = {
         "mono": 175,
     },
 }
-DEFAULT_PRESET = "male"
+DEFAULT_PRESET = "bonya"
 
 IMAGE_URL = "https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&enhance=true&nologo=true"
 
