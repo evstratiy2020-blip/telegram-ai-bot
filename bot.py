@@ -404,15 +404,22 @@ async def update_memory(messages: list[dict], reply: str) -> None:
 
 async def _tts_save(text: str, voice: str, rate: str, pitch: str, out: str) -> None:
     last = None
-    for _attempt in range(3):
+    for _attempt in range(2):
         try:
             await edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).save(out)
             if os.path.exists(out) and os.path.getsize(out) > 0:
                 return
         except Exception as exc:  # noqa: BLE001
             last = exc
-        await asyncio.sleep(1.0)
-    raise last or RuntimeError("edge-tts: no audio")
+        await asyncio.sleep(0.6)
+    try:
+        from gtts import gTTS
+        await asyncio.to_thread(gTTS(text=text, lang="ru").save, out)
+        if os.path.exists(out) and os.path.getsize(out) > 0:
+            return
+    except Exception as exc:  # noqa: BLE001
+        last = exc
+    raise last or RuntimeError("tts: no audio")
 
 
 async def generate_voice(text: str, out_path: str, preset_key: str = DEFAULT_PRESET, fmt: str = "ogg") -> None:
