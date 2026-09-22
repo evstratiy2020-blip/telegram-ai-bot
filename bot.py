@@ -213,21 +213,24 @@ def music_keyboard() -> InlineKeyboardMarkup:
 def voice_music_keyboard(uid: int) -> InlineKeyboardMarkup:
     cur_voice = voice_settings.get(uid, DEFAULT_PRESET)
     cur_music = music_settings.get(uid, "none")
-    rows = [[
-        InlineKeyboardButton(
-            text=("✅ " if key == cur_voice else "") + data["name"],
-            callback_data=f"voice:{key}",
-        )
-        for key, data in VOICE_PRESETS.items()
-    ]]
-    items = list(MUSIC_NAMES.items())
-    for i in range(0, len(items), 2):
+    rows = []
+    vitems = list(VOICE_PRESETS.items())
+    for i in range(0, len(vitems), 2):
+        rows.append([
+            InlineKeyboardButton(
+                text=("✅ " if key == cur_voice else "") + data["name"],
+                callback_data=f"voice:{key}",
+            )
+            for key, data in vitems[i:i + 2]
+        ])
+    mitems = list(MUSIC_NAMES.items())
+    for i in range(0, len(mitems), 2):
         rows.append([
             InlineKeyboardButton(
                 text=("✅ " if key == cur_music else "") + data,
                 callback_data=f"music:{key}",
             )
-            for key, data in items[i:i + 2]
+            for key, data in mitems[i:i + 2]
         ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
