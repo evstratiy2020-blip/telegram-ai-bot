@@ -184,12 +184,16 @@ dp.message.outer_middleware(OwnerOnlyMiddleware())
 dp.callback_query.outer_middleware(OwnerOnlyMiddleware())
 
 
-def voice_keyboard() -> InlineKeyboardMarkup:
+def voice_keyboard(uid: int) -> InlineKeyboardMarkup:
+    cur = voice_settings.get(uid, DEFAULT_PRESET)
     rows = []
     items = list(VOICE_PRESETS.items())
     for i in range(0, len(items), 2):
         row = [
-            InlineKeyboardButton(text=data["name"], callback_data=f"voice:{key}")
+            InlineKeyboardButton(
+                text=("✅ " if key == cur else "") + data["name"],
+                callback_data=f"voice:{key}",
+            )
             for key, data in items[i:i + 2]
         ]
         rows.append(row)
@@ -214,12 +218,16 @@ MUSIC_NAMES = {
 }
 
 
-def music_keyboard() -> InlineKeyboardMarkup:
+def music_keyboard(uid: int) -> InlineKeyboardMarkup:
+    cur = music_settings.get(uid, "none")
     rows = []
     items = list(MUSIC_NAMES.items())
     for i in range(0, len(items), 2):
         rows.append([
-            InlineKeyboardButton(text=data, callback_data=f"music:{key}")
+            InlineKeyboardButton(
+                text=("✅ " if key == cur else "") + data,
+                callback_data=f"music:{key}",
+            )
             for key, data in items[i:i + 2]
         ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -953,12 +961,12 @@ async def start(message: Message) -> None:
 
 @dp.message(Command("voice"))
 async def voice_menu(message: Message) -> None:
-    await message.answer("Голос и музыка для пения:", reply_markup=voice_music_keyboard(message.from_user.id))
+    await message.answer("Выбери голос:", reply_markup=voice_keyboard(message.from_user.id))
 
 
 @dp.message(Command("music"))
 async def music_menu(message: Message) -> None:
-    await message.answer("Голос и музыка для пения:", reply_markup=voice_music_keyboard(message.from_user.id))
+    await message.answer("Выбери музыку для пения:", reply_markup=music_keyboard(message.from_user.id))
 
 
 @dp.message(Command("img"))
@@ -972,7 +980,7 @@ async def img_command(message: Message) -> None:
 
 @dp.message(F.text == "🎙 Голос")
 async def kb_voice(message: Message) -> None:
-    await message.answer("Голос и музыка для пения:", reply_markup=voice_music_keyboard(message.from_user.id))
+    await message.answer("Выбери голос:", reply_markup=voice_keyboard(message.from_user.id))
 
 
 @dp.message(F.text == "🖼 Картинка")
@@ -995,7 +1003,7 @@ async def kb_sing(message: Message) -> None:
 
 @dp.message(F.text == "🎶 Музыка")
 async def kb_music(message: Message) -> None:
-    await message.answer("Голос и музыка для пения:", reply_markup=voice_music_keyboard(message.from_user.id))
+    await message.answer("Выбери музыку для пения:", reply_markup=music_keyboard(message.from_user.id))
 
 
 @dp.message(F.text == "🔇 Молчать")
@@ -1024,7 +1032,7 @@ async def voice_callback(cq: CallbackQuery) -> None:
     if action == "off":
         voice_enabled.discard(uid)
         asyncio.create_task(push_state())
-        await cq.message.edit_text("Голос выключен.", reply_markup=voice_music_keyboard(uid))
+        await cq.message.edit_text("Голос выключен.", reply_markup=voice_keyboard(uid))
     elif action in VOICE_PRESETS:
         voice_settings[uid] = action
         voice_enabled.add(uid)
@@ -1032,7 +1040,7 @@ async def voice_callback(cq: CallbackQuery) -> None:
         name = VOICE_PRESETS[action]["name"]
         await cq.message.edit_text(
             f"Выбран голос: {name}. Слушай пример ниже:",
-            reply_markup=voice_music_keyboard(uid),
+            reply_markup=voice_keyboard(uid),
         )
         try:
             with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
@@ -1051,7 +1059,7 @@ async def music_callback(cq: CallbackQuery) -> None:
     key = cq.data.split(":", 1)[1]
     if key in MUSIC_NAMES:
         music_settings[uid] = key
-        await cq.message.edit_text(f"Музыка для пения: {MUSIC_NAMES[key]}", reply_markup=voice_music_keyboard(uid))
+        await cq.message.edit_text(f"Музыка для пения: {MUSIC_NAMES[key]}", reply_markup=music_keyboard(uid))
     await cq.answer()
 
 
