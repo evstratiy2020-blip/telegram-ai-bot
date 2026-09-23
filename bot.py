@@ -403,7 +403,7 @@ async def ask_vision(image_bytes: bytes, question: str) -> str:
 
 
 async def load_memory() -> None:
-    global memory_facts, history
+    global memory_facts, history, voice_enabled, voice_settings
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(MEMORY_BIN_URL)
@@ -415,6 +415,12 @@ async def load_memory() -> None:
             hist = data.get("history", {})
             if isinstance(hist, dict):
                 history = {int(k): v for k, v in hist.items() if isinstance(v, list)}
+            ve = data.get("voice_enabled", [])
+            if isinstance(ve, list):
+                voice_enabled = {int(x) for x in ve}
+            vs = data.get("voice_settings", {})
+            if isinstance(vs, dict):
+                voice_settings = {int(k): v for k, v in vs.items()}
     except Exception:
         pass
 
@@ -424,6 +430,8 @@ async def push_state() -> None:
         payload = {
             "facts": memory_facts,
             "history": {str(k): v for k, v in history.items()},
+            "voice_enabled": sorted(voice_enabled),
+            "voice_settings": {str(k): v for k, v in voice_settings.items()},
         }
         async with httpx.AsyncClient(timeout=30) as client:
             await client.put(MEMORY_BIN_URL, json=payload)
@@ -994,6 +1002,7 @@ async def kb_music(message: Message) -> None:
 async def kb_voice_off(message: Message) -> None:
     voice_enabled.discard(message.from_user.id)
     sing_mode.discard(message.from_user.id)
+    asyncio.create_task(push_state())
     await message.answer("Молчу. Отвечаю только текстом, без голоса и песен. 🤐")
 
 
@@ -1014,10 +1023,12 @@ async def voice_callback(cq: CallbackQuery) -> None:
     action = cq.data.split(":", 1)[1]
     if action == "off":
         voice_enabled.discard(uid)
+        asyncio.create_task(push_state())
         await cq.message.edit_text("Голос выключен.", reply_markup=voice_music_keyboard(uid))
     elif action in VOICE_PRESETS:
         voice_settings[uid] = action
         voice_enabled.add(uid)
+        asyncio.create_task(push_state())
         name = VOICE_PRESETS[action]["name"]
         await cq.message.edit_text(
             f"Выбран голос: {name}. Слушай пример ниже:",
