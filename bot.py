@@ -403,12 +403,30 @@ async def ask_vision(image_bytes: bytes, question: str) -> str:
 
 
 async def load_memory() -> None:
-    global memory_facts
+    global memory_facts, history
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(MEMORY_BIN_URL)
             data = resp.json()
-            memory_facts = data.get("facts", []) if isinstance(data, dict) else []
+        if isinstance(data, dict):
+            facts = data.get("facts", [])
+            if isinstance(facts, list):
+                memory_facts = facts
+            hist = data.get("history", {})
+            if isinstance(hist, dict):
+                history = {int(k): v for k, v in hist.items() if isinstance(v, list)}
+    except Exception:
+        pass
+
+
+async def push_state() -> None:
+    try:
+        payload = {
+            "facts": memory_facts,
+            "history": {str(k): v for k, v in history.items()},
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            await client.put(MEMORY_BIN_URL, json=payload)
     except Exception:
         pass
 
@@ -416,11 +434,7 @@ async def load_memory() -> None:
 async def save_memory(facts: list[str]) -> None:
     global memory_facts
     memory_facts = facts
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            await client.put(MEMORY_BIN_URL, json={"facts": facts})
-    except Exception:
-        pass
+    await push_state()
 
 
 async def update_memory(messages: list[dict], reply: str) -> None:
@@ -1124,7 +1138,15 @@ async def handle_photo(message: Message) -> None:
         else:
             question = caption
         reply = await ask_vision(data, question)
-        await sent.edit_text(strip_markdown(reply or "")[:4000])
+        reply = strip_markdown(reply or "").strip()
+        await sent.edit_text(reply[:4000])
+        uid = message.from_user.id
+        hist = get_history(uid)
+        note = ("[фото, распознанный текст]\n" if ocr else "[фото]\n") + (caption or "")
+        hist.append({"role": "user", "content": note.strip()})
+        hist.append({"role": "assistant", "content": reply})
+        history[uid] = hist[-HISTORY_LIMIT:]
+        asyncio.create_task(push_state())
     except Exception as exc:
         await sent.edit_text(f"Не получилось посмотреть: {exc}")
 
@@ -1186,6 +1208,7 @@ async def chat(message: Message) -> None:
         await sent.edit_text(reply)
         hist.append({"role": "assistant", "content": reply})
         history[uid] = hist[-HISTORY_LIMIT:]
+        asyncio.create_task(push_state())
         asyncio.create_task(update_memory(hist, reply))
 
         if uid in voice_enabled:
