@@ -371,7 +371,7 @@ async def ask_vision(image_bytes: bytes, question: str) -> str:
         "messages": [{
             "role": "user",
             "content": [
-                {"type": "text", "text": question or "Опиши, что на картинке. Если есть текст — прочитай его."},
+                {"type": "text", "text": question or "Если на изображении есть текст — верни его дословно. Иначе кратко опиши, что на фото."},
                 {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}},
             ],
         }],
@@ -1087,7 +1087,10 @@ async def handle_photo(message: Message) -> None:
     if not OPENROUTER_API_KEY:
         await message.answer("Картинки пока не настроены (нет ключа зрения).")
         return
-    sent = await message.answer("👁 Смотрю…")
+    caption = (message.caption or "").strip()
+    caption_low = caption.lower()
+    ocr = any(w in caption_low for w in ("текст", "распознай", "розпізнай", "прочитай", "прочти", "перепиши", "ocr"))
+    sent = await message.answer("📷 Читаю текст…" if ocr else "👁 Смотрю…")
     try:
         photo = message.photo[-1]
         with tempfile.TemporaryDirectory() as tmp:
@@ -1095,7 +1098,13 @@ async def handle_photo(message: Message) -> None:
             await bot.download(photo, destination=path)
             with open(path, "rb") as f:
                 data = f.read()
-        question = (message.caption or "").strip()
+        if ocr:
+            question = (
+                "Распознай ВЕСЬ текст на изображении и верни только этот текст, "
+                "без описаний и комментариев. Сохрани порядок строк и знаки препинания."
+            )
+        else:
+            question = caption
         reply = await ask_vision(data, question)
         await sent.edit_text(strip_markdown(reply or "")[:4000])
     except Exception as exc:
