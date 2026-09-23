@@ -54,6 +54,7 @@ SITE_PASSWORD_HASH = os.getenv(
 )
 SESSION_TOKEN = hmac.new(BOT_TOKEN.encode(), b"site-session-v1", hashlib.sha256).hexdigest()
 APP_KEY = hmac.new(BOT_TOKEN.encode(), b"app-key-v1", hashlib.sha256).hexdigest()[:24]
+MEMORY_BIN_URL = "https://extendsclass.com/api/json-storage/bin/efdadca"
 LLM_API_KEY = os.getenv("LLM_API_KEY")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
@@ -383,6 +384,27 @@ async def ask_vision(image_bytes: bytes, question: str) -> str:
     return data["choices"][0]["message"]["content"].strip()
 
 
+async def load_memory() -> None:
+    global memory_facts
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(MEMORY_BIN_URL)
+            data = resp.json()
+            memory_facts = data.get("facts", []) if isinstance(data, dict) else []
+    except Exception:
+        pass
+
+
+async def save_memory(facts: list[str]) -> None:
+    global memory_facts
+    memory_facts = facts
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            await client.put(MEMORY_BIN_URL, json={"facts": facts})
+    except Exception:
+        pass
+
+
 async def update_memory(messages: list[dict], reply: str) -> None:
     global memory_facts
     convo = "\n".join(f"{m['role']}: {m['content']}" for m in messages[-6:]) + f"\nassistant: {reply}"
@@ -401,7 +423,7 @@ async def update_memory(messages: list[dict], reply: str) -> None:
             data = resp.json()
         text = data["choices"][0]["message"]["content"].strip()
         facts = [ln.strip("-• \t") for ln in text.splitlines() if ln.strip()]
-        memory_facts = facts[:30]
+        await save_memory(facts[:30])
     except Exception:
         pass
 
@@ -1333,6 +1355,7 @@ def run_webhook() -> None:
                 pass
 
     async def on_startup(_: web.Application) -> None:
+        await load_memory()
         await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=False)
         if MINIAPP_URL:
             try:
