@@ -61,7 +61,18 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
 LLM_URL = f"{LLM_BASE_URL}/chat/completions"
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-VISION_MODEL = os.getenv("VISION_MODEL", "inclusionai/ling-3.0-flash-vl:free")
+VISION_MODELS = []
+_vm_env = os.getenv("VISION_MODEL", "").strip()
+if _vm_env:
+    VISION_MODELS.append(_vm_env)
+for _vm in (
+    "qwen/qwen3.8-27b:free",
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "openrouter/free",
+):
+    if _vm not in VISION_MODELS:
+        VISION_MODELS.append(_vm)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
@@ -366,22 +377,29 @@ async def ask_llm(messages: list[dict]) -> str:
 
 async def ask_vision(image_bytes: bytes, question: str) -> str:
     b64 = base64.b64encode(image_bytes).decode()
-    body = {
-        "model": VISION_MODEL,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": question or "Если на изображении есть текст — верни его дословно. Иначе кратко опиши, что на фото."},
-                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}},
-            ],
-        }],
-    }
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+    last_exc = None
     async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+        for model in VISION_MODELS:
+            body = {
+                "model": model,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": question or "Если на изображении есть текст — верни его дословно. Иначе кратко опиши, что на фото."},
+                        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}},
+                    ],
+                }],
+            }
+            try:
+                resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"].strip()
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                continue
+    raise last_exc if last_exc else RuntimeError("vision failed")
 
 
 async def load_memory() -> None:
