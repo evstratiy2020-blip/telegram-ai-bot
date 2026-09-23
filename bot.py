@@ -244,6 +244,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         KeyboardButton(text="🔇 Молчать"),
         KeyboardButton(text="🎼 Песни"),
         KeyboardButton(text="🎶 Музыка"),
+        KeyboardButton(text="🖼 Картинка"),
     ]
     if MINIAPP_URL:
         row.append(KeyboardButton(text="🚀 Боня", web_app=WebAppInfo(url=MINIAPP_URL)))
@@ -1103,6 +1104,9 @@ async def chat(message: Message) -> None:
     tl = text0.lower()
     if song_drafts.get(uid) and any(w in tl for w in ("доработ", "измен", "передел", "поправ", "допиши", "добавь")):
         await revise_song(message, text0)
+        return
+    if any(w in tl for w in ("нарисуй", "намалюй", "сгенерируй картинку", "згенеруй картинку", "намалюй картинку")):
+        await draw_image(message, text0)
         return
     if any(w in tl for w in ("спой", "песн", "стих", "сочин")):
         await sing_reply(message, text0)
