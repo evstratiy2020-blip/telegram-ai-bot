@@ -59,6 +59,7 @@ LLM_API_KEY = os.getenv("LLM_API_KEY")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
 LLM_URL = f"{LLM_BASE_URL}/chat/completions"
+BALANCE_URL = f"{LLM_BASE_URL}/user/balance"
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 VISION_MODELS = []
@@ -1160,6 +1161,28 @@ async def status_cmd(message: Message) -> None:
     await message.answer(
         f"Режимы:\n🎙 Голос: {voice_state} ({voice_name})\n🎼 Песни: {sing_state}\n🧠 Память: {len(memory_facts)} фактов\n👁 Зрение: {vision_state}"
     )
+
+
+@dp.message(Command("balance"))
+async def balance_cmd(message: Message) -> None:
+    if not LLM_API_KEY:
+        await message.answer("Нет ключа ИИ (LLM_API_KEY).")
+        return
+    sent = await message.answer("💰 Проверяю баланс…")
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(BALANCE_URL, headers={"Authorization": f"Bearer {LLM_API_KEY}"})
+            resp.raise_for_status()
+            data = resp.json()
+        infos = data.get("balance_infos") or []
+        if not infos:
+            await sent.edit_text("Баланс недоступен.")
+            return
+        lines = [f"💰 {i.get('total_balance', '?')} {i.get('currency', '')}".strip() for i in infos]
+        avail = "доступен" if data.get("is_available") else "недоступен"
+        await sent.edit_text(f"Баланс ИИ ({avail}):\n" + "\n".join(lines))
+    except Exception as exc:
+        await sent.edit_text(f"Не удалось узнать баланс: {exc}")
 
 
 @dp.message(F.document)
