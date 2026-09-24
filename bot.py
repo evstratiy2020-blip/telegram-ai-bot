@@ -61,6 +61,16 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
 LLM_URL = f"{LLM_BASE_URL}/chat/completions"
 BALANCE_URL = f"{LLM_BASE_URL}/user/balance"
 
+DEFAULT_MODEL_KEY = "deepseek"
+MODEL_OPTIONS = [
+    {"key": "deepseek", "label": "DeepSeek · универсальная", "provider": "deepseek"},
+    {"key": "gpt", "label": "GPT-4o mini", "provider": "openrouter", "model": "openai/gpt-4o-mini"},
+    {"key": "claude", "label": "Claude 3.5 Sonnet", "provider": "openrouter", "model": "anthropic/claude-3.5-sonnet"},
+    {"key": "gemini", "label": "Gemini Flash", "provider": "openrouter", "model": "google/gemini-flash-1.5"},
+    {"key": "llama", "label": "Llama 3.3 70B · free", "provider": "openrouter", "model": "meta-llama/llama-3.3-70b-instruct:free"},
+    {"key": "qwen", "label": "Qwen 2.5 72B · free", "provider": "openrouter", "model": "qwen/qwen-2.5-72b-instruct:free"},
+]
+
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 VISION_MODELS = []
 _vm_env = os.getenv("VISION_MODEL", "").strip()
@@ -159,6 +169,7 @@ dp = Dispatcher()
 history: dict[int, list[dict]] = {}
 voice_enabled: set[int] = set()
 voice_settings: dict[int, str] = {}
+model_settings: dict[int, str] = {}
 image_mode: set[int] = set()
 sing_mode: set[int] = set()
 music_settings: dict[int, str] = {}
@@ -262,16 +273,18 @@ def voice_music_keyboard(uid: int) -> InlineKeyboardMarkup:
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
-    row = [
+    buttons = [
         KeyboardButton(text="🎙 Голос"),
         KeyboardButton(text="🔇 Молчать"),
         KeyboardButton(text="🎼 Песни"),
         KeyboardButton(text="🎶 Музыка"),
         KeyboardButton(text="🖼 Картинка"),
+        KeyboardButton(text="🤖 Модель"),
     ]
     if MINIAPP_URL:
-        row.append(KeyboardButton(text="🚀 Боня", web_app=WebAppInfo(url=MINIAPP_URL)))
-    keyboard = [row]
+        buttons.append(KeyboardButton(text="🚀 Боня", web_app=WebAppInfo(url=MINIAPP_URL)))
+    half = (len(buttons) + 1) // 2
+    keyboard = [buttons[:half], buttons[half:]]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
@@ -376,18 +389,36 @@ def is_authorized(request) -> bool:
     return False
 
 
-async def ask_llm(messages: list[dict]) -> str:
+def resolve_llm(uid: int):
+    key = model_settings.get(uid, DEFAULT_MODEL_KEY)
+    opt = next((m for m in MODEL_OPTIONS if m["key"] == key), None)
+    if opt and opt.get("provider") == "openrouter" and OPENROUTER_API_KEY:
+        return OPENROUTER_URL, OPENROUTER_API_KEY, opt["model"]
+    return LLM_URL, LLM_API_KEY, LLM_MODEL
+
+
+def model_keyboard(uid: int) -> InlineKeyboardMarkup:
+    cur = model_settings.get(uid, DEFAULT_MODEL_KEY)
+    rows = []
+    for m in MODEL_OPTIONS:
+        mark = "✅ " if m["key"] == cur else ""
+        rows.append([InlineKeyboardButton(text=mark + m["label"], callback_data=f"model:{m['key']}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def ask_llm(messages: list[dict], provider=None) -> str:
+    url, api_key, model = provider or (LLM_URL, LLM_API_KEY, LLM_MODEL)
     system = SYSTEM_PROMPT
     if memory_facts:
         system += "\n\nЧто ты помнишь о пользователе (учитывай это):\n" + "\n".join(f"- {f}" for f in memory_facts)
     payload = {
-        "model": LLM_MODEL,
+        "model": model,
         "messages": [{"role": "system", "content": system}] + messages,
         "stream": False,
     }
-    headers = {"Authorization": f"Bearer {LLM_API_KEY}"}
+    headers = {"Authorization": f"Bearer {api_key}"}
     async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(LLM_URL, json=payload, headers=headers)
+        resp = await client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
     return data["choices"][0]["message"]["content"].strip()
@@ -421,7 +452,7 @@ async def ask_vision(image_bytes: bytes, question: str) -> str:
 
 
 async def load_memory() -> None:
-    global memory_facts, history, voice_enabled, voice_settings
+    global memory_facts, history, voice_enabled, voice_settings, model_settings
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(MEMORY_BIN_URL)
@@ -439,6 +470,9 @@ async def load_memory() -> None:
             vs = data.get("voice_settings", {})
             if isinstance(vs, dict):
                 voice_settings = {int(k): v for k, v in vs.items()}
+            ms = data.get("model_settings", {})
+            if isinstance(ms, dict):
+                model_settings = {int(k): v for k, v in ms.items()}
     except Exception:
         pass
 
@@ -450,6 +484,7 @@ async def push_state() -> None:
             "history": {str(k): v for k, v in history.items()},
             "voice_enabled": sorted(voice_enabled),
             "voice_settings": {str(k): v for k, v in voice_settings.items()},
+            "model_settings": {str(k): v for k, v in model_settings.items()},
         }
         async with httpx.AsyncClient(timeout=30) as client:
             await client.put(MEMORY_BIN_URL, json=payload)
@@ -1029,6 +1064,11 @@ async def kb_music(message: Message) -> None:
     await message.answer("Выбери музыку для пения:", reply_markup=music_keyboard(message.from_user.id))
 
 
+@dp.message(F.text == "🤖 Модель")
+async def kb_model(message: Message) -> None:
+    await message.answer("🤖 Выбери модель ИИ:", reply_markup=model_keyboard(message.from_user.id))
+
+
 @dp.message(F.text == "🔇 Молчать")
 async def kb_voice_off(message: Message) -> None:
     voice_enabled.discard(message.from_user.id)
@@ -1115,6 +1155,21 @@ async def music_callback(cq: CallbackQuery) -> None:
     await cq.answer()
 
 
+@dp.callback_query(lambda c: c.data and c.data.startswith("model:"))
+async def model_callback(cq: CallbackQuery) -> None:
+    uid = cq.from_user.id
+    key = cq.data.split(":", 1)[1]
+    opt = next((m for m in MODEL_OPTIONS if m["key"] == key), None)
+    if opt:
+        model_settings[uid] = key
+        asyncio.create_task(push_state())
+        await cq.message.edit_text(
+            f"✅ Готово! Теперь отвечаю моделью: {opt['label']}",
+            reply_markup=model_keyboard(uid),
+        )
+    await cq.answer()
+
+
 @dp.callback_query(lambda c: c.data == "song:play")
 async def song_play(cq: CallbackQuery) -> None:
     uid = cq.from_user.id
@@ -1151,6 +1206,11 @@ async def clear_history(message: Message) -> None:
     await message.answer("История диалога очищена.")
 
 
+@dp.message(Command("model"))
+async def model_cmd(message: Message) -> None:
+    await message.answer("🤖 Выбери модель ИИ:", reply_markup=model_keyboard(message.from_user.id))
+
+
 @dp.message(Command("status"))
 async def status_cmd(message: Message) -> None:
     uid = message.from_user.id
@@ -1158,8 +1218,9 @@ async def status_cmd(message: Message) -> None:
     voice_name = VOICE_PRESETS.get(voice_settings.get(uid, DEFAULT_PRESET), {}).get("name", "-")
     sing_state = "вкл" if uid in sing_mode else "выкл"
     vision_state = "вкл" if OPENROUTER_API_KEY else "выкл (нет ключа)"
+    model_name = next((m["label"] for m in MODEL_OPTIONS if m["key"] == model_settings.get(uid, DEFAULT_MODEL_KEY)), "DeepSeek")
     await message.answer(
-        f"Режимы:\n🎙 Голос: {voice_state} ({voice_name})\n🎼 Песни: {sing_state}\n🧠 Память: {len(memory_facts)} фактов\n👁 Зрение: {vision_state}"
+        f"Режимы:\n🎙 Голос: {voice_state} ({voice_name})\n🎼 Песни: {sing_state}\n🤖 Модель: {model_name}\n🧠 Память: {len(memory_facts)} фактов\n👁 Зрение: {vision_state}"
     )
 
 
@@ -1305,7 +1366,7 @@ async def chat(message: Message) -> None:
         ctx = last_file.get(uid)
         if ctx:
             msgs = [{"role": "user", "content": "Файл пользователя (расписание/документ):\n" + ctx[:6000]}] + hist
-        reply = await ask_llm(msgs)
+        reply = await ask_llm(msgs, resolve_llm(uid))
         if not reply:
             reply = "(пустой ответ от модели)"
         reply = strip_markdown(reply)
