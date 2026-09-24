@@ -278,6 +278,13 @@ def get_history(uid: int) -> list[dict]:
     return history.setdefault(uid, [])
 
 
+def last_assistant_text(uid: int) -> str:
+    for m in reversed(get_history(uid)):
+        if m.get("role") == "assistant" and m.get("content"):
+            return str(m["content"])
+    return ""
+
+
 def strip_markdown(text: str) -> str:
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"\*(.+?)\*", r"\1", text)
@@ -875,10 +882,11 @@ async def draw_image(message: Message, prompt: str) -> None:
         await sent.edit_text(f"Не получилось нарисовать: {exc}")
 
 
-async def sing_reply(message: Message, text: str) -> None:
-    sent = await message.answer("🎼 Сочиняю песню…")
+async def sing_reply(message: Message, text: str, lyrics: str | None = None) -> None:
+    sent = await message.answer("🎼 Готовлю песню…")
     try:
-        lyrics = await compose_song(text)
+        if not lyrics:
+            lyrics = await compose_song(text)
         if not lyrics:
             lyrics = text[:300]
         song_drafts[message.from_user.id] = lyrics
@@ -1248,7 +1256,13 @@ async def chat(message: Message) -> None:
         await draw_image(message, text0)
         return
     if any(w in tl for w in ("спой", "спеть", "песн")):
-        await sing_reply(message, text0)
+        prev = last_assistant_text(uid)
+        ref = any(w in tl for w in ("его", "её", "ее", "ней", "него", "неё", "это", "этот", "эту", "эти", "тот", "ту", "стих"))
+        bare = tl.strip(" !?.,") in ("спой", "спеть", "спой пожалуйста", "спой его", "спой это")
+        if prev and (ref or bare):
+            await sing_reply(message, text0, lyrics=prev)
+        else:
+            await sing_reply(message, text0)
         return
     if "озвуч" in tl:
         await voice_preview(message, text0)
