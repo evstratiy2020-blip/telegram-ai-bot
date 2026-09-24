@@ -64,11 +64,11 @@ BALANCE_URL = f"{LLM_BASE_URL}/user/balance"
 DEFAULT_MODEL_KEY = "deepseek"
 MODEL_OPTIONS = [
     {"key": "deepseek", "label": "DeepSeek · универсальная", "provider": "deepseek"},
-    {"key": "gpt", "label": "GPT-4o mini (OpenAI)", "provider": "openrouter", "model": "openai/gpt-4o-mini"},
-    {"key": "claude", "label": "Claude Sonnet 4.5", "provider": "openrouter", "model": "anthropic/claude-sonnet-4.5"},
-    {"key": "gemini", "label": "Gemini 2.5 Flash", "provider": "openrouter", "model": "google/gemini-2.5-flash"},
-    {"key": "qwen", "label": "Qwen 3.8 · бесплатно", "provider": "openrouter", "model": "qwen/qwen3.8-27b:free"},
-    {"key": "gemma", "label": "Gemma 4 · бесплатно", "provider": "openrouter", "model": "google/gemma-4-31b-it:free"},
+    {"key": "gpt4o", "label": "GPT-4o mini (OpenAI)", "provider": "openrouter", "model": "openai/gpt-4o-mini"},
+    {"key": "gpt41", "label": "GPT-4.1 mini (OpenAI)", "provider": "openrouter", "model": "openai/gpt-4.1-mini"},
+    {"key": "gemini", "label": "Gemini 2.5 Flash (Google)", "provider": "openrouter", "model": "google/gemini-2.5-flash"},
+    {"key": "claude", "label": "Claude Sonnet 4.5 (Anthropic)", "provider": "openrouter", "model": "anthropic/claude-sonnet-4.5"},
+    {"key": "haiku", "label": "Claude Haiku 4.5 (Anthropic)", "provider": "openrouter", "model": "anthropic/claude-haiku-4.5"},
 ]
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
