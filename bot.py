@@ -163,6 +163,8 @@ sing_mode: set[int] = set()
 music_settings: dict[int, str] = {}
 song_drafts: dict[int, str] = {}
 song_edit: set[int] = set()
+voice_input: set[int] = set()
+voice_drafts: dict[int, str] = {}
 last_file: dict[int, str] = {}
 memory_facts: list[str] = []
 
@@ -411,7 +413,7 @@ async def ask_vision(image_bytes: bytes, question: str) -> str:
 
 
 async def load_memory() -> None:
-    global memory_facts, history, voice_enabled, voice_settings
+    global memory_facts, history, voice_enabled, voice_settings, voice_input
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(MEMORY_BIN_URL)
@@ -429,6 +431,9 @@ async def load_memory() -> None:
             vs = data.get("voice_settings", {})
             if isinstance(vs, dict):
                 voice_settings = {int(k): v for k, v in vs.items()}
+            vi = data.get("voice_input", [])
+            if isinstance(vi, list):
+                voice_input = {int(x) for x in vi}
     except Exception:
         pass
 
@@ -440,6 +445,7 @@ async def push_state() -> None:
             "history": {str(k): v for k, v in history.items()},
             "voice_enabled": sorted(voice_enabled),
             "voice_settings": {str(k): v for k, v in voice_settings.items()},
+            "voice_input": sorted(voice_input),
         }
         async with httpx.AsyncClient(timeout=30) as client:
             await client.put(MEMORY_BIN_URL, json=payload)
@@ -892,6 +898,18 @@ def song_keyboard() -> InlineKeyboardMarkup:
     ]])
 
 
+def voice_buttons() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="▶️ Запуск", callback_data="vtext:play"),
+        InlineKeyboardButton(text="✏️ Редактировать", callback_data="vtext:edit"),
+    ]])
+
+
+async def voice_preview(message: Message, text: str) -> None:
+    voice_drafts[message.from_user.id] = text
+    await message.answer(f"🔊 Озвучу этот текст один-в-один:\n\n{text}", reply_markup=voice_buttons())
+
+
 SCHEDULE_PROMPT = (
     "Ты — помощник, который разбирает письма от канцелярии монастыря (Киево-Печерская лавра). "
     "Из текста письма извлеки расписание служений. Ответь кратко и структурированно строками:\n"
@@ -980,7 +998,14 @@ async def img_command(message: Message) -> None:
 
 @dp.message(F.text == "🎙 Голос")
 async def kb_voice(message: Message) -> None:
-    await message.answer("Выбери голос:", reply_markup=voice_keyboard(message.from_user.id))
+    uid = message.from_user.id
+    voice_input.add(uid)
+    sing_mode.discard(uid)
+    asyncio.create_task(push_state())
+    await message.answer(
+        "Режим озвучки включён. Выбери голос и напиши текст — озвучу его один-в-один.\nВыбери голос:",
+        reply_markup=voice_keyboard(uid),
+    )
 
 
 @dp.message(F.text == "🖼 Картинка")
@@ -997,6 +1022,7 @@ async def kb_sing(message: Message) -> None:
         await message.answer("Режим песен выключен. Отвечаю как обычно. 💬")
     else:
         sing_mode.add(uid)
+        voice_input.discard(uid)
         style = MUSIC_NAMES.get(music_settings.get(uid, "none"), "Без музыки")
         await message.answer(f"🎼 Режим песен включён! Музыка: {style}.\nНапиши тему — сочиню песенку и спою её. Сменить музыку: /music")
 
@@ -1009,6 +1035,7 @@ async def kb_music(message: Message) -> None:
 @dp.message(F.text == "🔇 Молчать")
 async def kb_voice_off(message: Message) -> None:
     voice_enabled.discard(message.from_user.id)
+    voice_input.discard(message.from_user.id)
     sing_mode.discard(message.from_user.id)
     asyncio.create_task(push_state())
     await message.answer("Молчу. Отвечаю только текстом, без голоса и песен. 🤐")
@@ -1031,15 +1058,18 @@ async def voice_callback(cq: CallbackQuery) -> None:
     action = cq.data.split(":", 1)[1]
     if action == "off":
         voice_enabled.discard(uid)
+        voice_input.discard(uid)
         asyncio.create_task(push_state())
         await cq.message.edit_text("Голос выключен.", reply_markup=voice_keyboard(uid))
     elif action in VOICE_PRESETS:
         voice_settings[uid] = action
         voice_enabled.add(uid)
+        voice_input.add(uid)
+        sing_mode.discard(uid)
         asyncio.create_task(push_state())
         name = VOICE_PRESETS[action]["name"]
         await cq.message.edit_text(
-            f"Выбран голос: {name}. Слушай пример ниже:",
+            f"Выбран голос: {name}.\nРежим озвучки включён: напиши текст — озвучу его один-в-один.\nСлушай пример ниже:",
             reply_markup=voice_keyboard(uid),
         )
         try:
@@ -1051,6 +1081,36 @@ async def voice_callback(cq: CallbackQuery) -> None:
         except Exception:
             pass
     await cq.answer()
+
+
+@dp.callback_query(lambda c: c.data == "vtext:play")
+async def voice_play_cb(cq: CallbackQuery) -> None:
+    uid = cq.from_user.id
+    text = (voice_drafts.get(uid) or "").strip()
+    await cq.answer()
+    if not text:
+        await cq.message.answer("Нет текста. Напиши текст заново.")
+        return
+    msg = await cq.message.answer("🔊 Озвучиваю…")
+    try:
+        key = voice_settings.get(uid, DEFAULT_PRESET)
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+            path = f.name
+        await generate_voice(text[:500], path, key, fmt="ogg")
+        await msg.delete()
+        await cq.message.answer_voice(FSInputFile(path))
+        os.remove(path)
+    except Exception as exc:
+        await msg.edit_text(f"Не получилось озвучить: {exc}")
+
+
+@dp.callback_query(lambda c: c.data == "vtext:edit")
+async def voice_edit_cb(cq: CallbackQuery) -> None:
+    uid = cq.from_user.id
+    voice_input.add(uid)
+    sing_mode.discard(uid)
+    await cq.answer()
+    await cq.message.answer("✏️ Напиши исправленный текст — озвучу его один-в-один.")
 
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("music:"))
@@ -1190,6 +1250,11 @@ async def chat(message: Message) -> None:
         if text:
             await sing_reply(message, text)
             return
+    if uid in voice_input:
+        text = (message.text or "").strip()
+        if text:
+            await voice_preview(message, text)
+            return
     text0 = (message.text or "").strip()
     tl = text0.lower()
     if song_drafts.get(uid) and any(w in tl for w in ("доработ", "измен", "передел", "поправ", "допиши", "добавь")):
@@ -1202,7 +1267,7 @@ async def chat(message: Message) -> None:
         await sing_reply(message, text0)
         return
     if "озвуч" in tl:
-        await voice_reply(message, text0)
+        await voice_preview(message, text0)
         return
     if any(w in tl for w in ("разбери письмо", "разбери лист", "розбери лист", "разбери расписание", "разбери розклад", "канцеляр", "розклад служ", "расписание служ")):
         await parse_schedule(message, text0)
