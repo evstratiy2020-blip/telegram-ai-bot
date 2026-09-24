@@ -9,7 +9,7 @@ import tempfile
 import unicodedata
 import wave
 
-# deploy marker: music styles v2
+# deploy marker: music styles v2 / model selector
 from pathlib import Path
 from urllib.parse import parse_qsl, quote
 
