@@ -1233,6 +1233,7 @@ async def balance_cmd(message: Message) -> None:
     cur_label = cur_opt["label"] if cur_opt else cur_key
     sent = await message.answer("💰 Проверяю баланс…")
     lines = [f"🤖 Текущая модель: {cur_label}"]
+    is_or = bool(cur_opt and cur_opt.get("provider") == "openrouter")
 
     if LLM_API_KEY:
         try:
@@ -1241,11 +1242,12 @@ async def balance_cmd(message: Message) -> None:
                 resp.raise_for_status()
                 data = resp.json()
             infos = data.get("balance_infos") or []
+            mark = "" if is_or else "   ← выбранная модель"
             if infos:
                 for i in infos:
-                    lines.append(f"🟦 DeepSeek: {i.get('total_balance', '?')} {i.get('currency', '')}".strip())
+                    lines.append(f"🟦 DeepSeek: {i.get('total_balance', '?')} {i.get('currency', '')}{mark}".strip())
             else:
-                lines.append("🟦 DeepSeek: нет данных")
+                lines.append(f"🟦 DeepSeek: нет данных{mark}")
         except Exception:
             lines.append("🟦 DeepSeek: не удалось узнать")
     else:
@@ -1262,7 +1264,8 @@ async def balance_cmd(message: Message) -> None:
                 d = resp.json().get("data", {}) or {}
             total = float(d.get("total_credits", 0) or 0)
             used = float(d.get("total_usage", 0) or 0)
-            lines.append(f"🟪 OpenRouter (GPT/Gemini/Claude): ${total - used:.2f} (потрачено ${used:.2f})")
+            mark = "   ← выбранная модель" if is_or else ""
+            lines.append(f"🟪 OpenRouter (GPT/Gemini/Claude): ${total - used:.2f} (потрачено ${used:.2f}){mark}")
         except Exception:
             lines.append("🟪 OpenRouter: не удалось узнать")
     else:
