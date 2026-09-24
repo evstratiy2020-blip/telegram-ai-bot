@@ -64,11 +64,11 @@ BALANCE_URL = f"{LLM_BASE_URL}/user/balance"
 DEFAULT_MODEL_KEY = "deepseek"
 MODEL_OPTIONS = [
     {"key": "deepseek", "label": "DeepSeek · универсальная", "provider": "deepseek"},
-    {"key": "gpt", "label": "GPT-4o mini", "provider": "openrouter", "model": "openai/gpt-4o-mini"},
-    {"key": "claude", "label": "Claude 3.5 Sonnet", "provider": "openrouter", "model": "anthropic/claude-3.5-sonnet"},
-    {"key": "gemini", "label": "Gemini Flash", "provider": "openrouter", "model": "google/gemini-flash-1.5"},
-    {"key": "llama", "label": "Llama 3.3 70B · free", "provider": "openrouter", "model": "meta-llama/llama-3.3-70b-instruct:free"},
-    {"key": "qwen", "label": "Qwen 2.5 72B · free", "provider": "openrouter", "model": "qwen/qwen-2.5-72b-instruct:free"},
+    {"key": "gpt", "label": "GPT-4o mini (OpenAI)", "provider": "openrouter", "model": "openai/gpt-4o-mini"},
+    {"key": "claude", "label": "Claude Sonnet 4.5", "provider": "openrouter", "model": "anthropic/claude-sonnet-4.5"},
+    {"key": "gemini", "label": "Gemini 2.5 Flash", "provider": "openrouter", "model": "google/gemini-2.5-flash"},
+    {"key": "qwen", "label": "Qwen 3.8 · бесплатно", "provider": "openrouter", "model": "qwen/qwen3.8-27b:free"},
+    {"key": "gemma", "label": "Gemma 4 · бесплатно", "provider": "openrouter", "model": "google/gemma-4-31b-it:free"},
 ]
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
@@ -1366,7 +1366,15 @@ async def chat(message: Message) -> None:
         ctx = last_file.get(uid)
         if ctx:
             msgs = [{"role": "user", "content": "Файл пользователя (расписание/документ):\n" + ctx[:6000]}] + hist
-        reply = await ask_llm(msgs, resolve_llm(uid))
+        try:
+            reply = await ask_llm(msgs, resolve_llm(uid))
+        except Exception:
+            if model_settings.get(uid, DEFAULT_MODEL_KEY) != DEFAULT_MODEL_KEY:
+                model_settings[uid] = DEFAULT_MODEL_KEY
+                asyncio.create_task(push_state())
+                reply = "⚠️ Выбранная модель недоступна (нет доступа/кредитов). Отвечаю DeepSeek.\n\n" + await ask_llm(msgs)
+            else:
+                raise
         if not reply:
             reply = "(пустой ответ от модели)"
         reply = strip_markdown(reply)
