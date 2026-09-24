@@ -85,6 +85,7 @@ for _vm in (
     if _vm not in VISION_MODELS:
         VISION_MODELS.append(_vm)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
@@ -1226,24 +1227,48 @@ async def status_cmd(message: Message) -> None:
 
 @dp.message(Command("balance"))
 async def balance_cmd(message: Message) -> None:
-    if not LLM_API_KEY:
-        await message.answer("Нет ключа ИИ (LLM_API_KEY).")
-        return
+    uid = message.from_user.id
+    cur_key = model_settings.get(uid, DEFAULT_MODEL_KEY)
+    cur_opt = next((m for m in MODEL_OPTIONS if m["key"] == cur_key), None)
+    cur_label = cur_opt["label"] if cur_opt else cur_key
     sent = await message.answer("💰 Проверяю баланс…")
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(BALANCE_URL, headers={"Authorization": f"Bearer {LLM_API_KEY}"})
-            resp.raise_for_status()
-            data = resp.json()
-        infos = data.get("balance_infos") or []
-        if not infos:
-            await sent.edit_text("Баланс недоступен.")
-            return
-        lines = [f"💰 {i.get('total_balance', '?')} {i.get('currency', '')}".strip() for i in infos]
-        avail = "доступен" if data.get("is_available") else "недоступен"
-        await sent.edit_text(f"Баланс ИИ ({avail}):\n" + "\n".join(lines))
-    except Exception as exc:
-        await sent.edit_text(f"Не удалось узнать баланс: {exc}")
+    lines = [f"🤖 Текущая модель: {cur_label}"]
+
+    if LLM_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(BALANCE_URL, headers={"Authorization": f"Bearer {LLM_API_KEY}"})
+                resp.raise_for_status()
+                data = resp.json()
+            infos = data.get("balance_infos") or []
+            if infos:
+                for i in infos:
+                    lines.append(f"🟦 DeepSeek: {i.get('total_balance', '?')} {i.get('currency', '')}".strip())
+            else:
+                lines.append("🟦 DeepSeek: нет данных")
+        except Exception:
+            lines.append("🟦 DeepSeek: не удалось узнать")
+    else:
+        lines.append("🟦 DeepSeek: нет ключа")
+
+    if OPENROUTER_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    OPENROUTER_CREDITS_URL,
+                    headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
+                )
+                resp.raise_for_status()
+                d = resp.json().get("data", {}) or {}
+            total = float(d.get("total_credits", 0) or 0)
+            used = float(d.get("total_usage", 0) or 0)
+            lines.append(f"🟪 OpenRouter (GPT/Gemini/Claude): ${total - used:.2f} (потрачено ${used:.2f})")
+        except Exception:
+            lines.append("🟪 OpenRouter: не удалось узнать")
+    else:
+        lines.append("🟪 OpenRouter: нет ключа")
+
+    await sent.edit_text("\n".join(lines))
 
 
 @dp.message(F.document)
