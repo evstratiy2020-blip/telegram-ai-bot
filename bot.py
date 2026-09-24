@@ -1247,7 +1247,7 @@ async def chat(message: Message) -> None:
     if any(w in tl for w in ("нарисуй", "намалюй", "сгенерируй картинку", "згенеруй картинку", "намалюй картинку")):
         await draw_image(message, text0)
         return
-    if any(w in tl for w in ("спой", "песн", "стих", "сочин")):
+    if any(w in tl for w in ("спой", "спеть", "песн")):
         await sing_reply(message, text0)
         return
     if "озвуч" in tl:
