@@ -11,7 +11,7 @@ import wave
 
 # deploy marker: model selector v2
 from pathlib import Path
-from urllib.parse import parse_qsl, quote
+from urllib.parse import parse_qsl, quote, unquote
 
 import edge_tts
 import httpx
@@ -988,6 +988,71 @@ async def voice_preview(message: Message, text: str) -> None:
     await message.answer(f"🔊 Озвучу этот текст один-в-один:\n\n{text}", reply_markup=voice_buttons())
 
 
+SEARCH_TRIGGERS = ("найди", "найти", "поищи", "погугли", "загугли", "в интернете", "в интернеті", "где купить", "де купити", "дай ссылк", "ссылки", "поиск")
+
+
+async def web_search(query: str, count: int = 5) -> list:
+    brave_key = os.getenv("BRAVE_API_KEY", "").strip()
+    if brave_key:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    "https://api.search.brave.com/res/v1/web/search",
+                    params={"q": query, "count": count},
+                    headers={"X-Subscription-Token": brave_key, "Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            out = [
+                {"title": it.get("title", ""), "url": it.get("url", "")}
+                for it in (data.get("web", {}).get("results", []) or [])[:count]
+            ]
+            if out:
+                return out
+        except Exception:
+            pass
+    try:
+        async with httpx.AsyncClient(
+            timeout=30,
+            follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        ) as client:
+            resp = await client.get("https://html.duckduckgo.com/html/", params={"q": query})
+            html = resp.text
+    except Exception:
+        return []
+    results = []
+    for href, title in re.findall(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', html, re.S):
+        m = re.search(r"uddg=([^&]+)", href)
+        url = unquote(m.group(1)) if m else href
+        t = re.sub(r"<[^>]+>", "", title).strip()
+        if url.startswith("http"):
+            results.append({"title": t, "url": url})
+        if len(results) >= count:
+            break
+    return results
+
+
+async def search_reply(message: Message, text: str) -> None:
+    q = text
+    for w in SEARCH_TRIGGERS:
+        q = re.sub(re.escape(w), " ", q, flags=re.IGNORECASE)
+    q = re.sub(r"\s+", " ", q).strip(" ,.:;!?—-")
+    if not q:
+        await message.answer("Напиши, что искать. Например: найди порошок Ariel 3 кг")
+        return
+    sent = await message.answer("🔎 Ищу в интернете…")
+    results = await web_search(q)
+    if not results:
+        await sent.edit_text("Не нашёл. Попробуй сформулировать иначе.")
+        return
+    lines = [f"🔎 Нашёл по запросу «{q}»:", ""]
+    for r in results:
+        title = r["title"] or r["url"]
+        lines.append(f"• {title}\n{r['url']}")
+    await sent.edit_text("\n\n".join(lines))
+
+
 SCHEDULE_PROMPT = (
     "Ты — помощник, который разбирает письма от канцелярии монастыря (Киево-Печерская лавра). "
     "Из текста письма извлеки расписание служений. Ответь кратко и структурированно строками:\n"
@@ -1486,6 +1551,9 @@ async def chat(message: Message) -> None:
         return
     if any(w in tl for w in ("разбери письмо", "разбери лист", "розбери лист", "разбери расписание", "разбери розклад", "канцеляр", "розклад служ", "расписание служ")):
         await parse_schedule(message, text0)
+        return
+    if any(w in tl for w in SEARCH_TRIGGERS):
+        await search_reply(message, text0)
         return
     hist = get_history(uid)
     hist.append({"role": "user", "content": message.text or ""})
