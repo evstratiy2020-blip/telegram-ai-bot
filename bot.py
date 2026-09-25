@@ -180,6 +180,7 @@ voice_edit: set[int] = set()
 voice_drafts: dict[int, str] = {}
 drafts: dict[int, str] = {}
 draft_edit: set[int] = set()
+muted: set[int] = set()
 last_file: dict[int, str] = {}
 memory_facts: list[str] = []
 
@@ -275,10 +276,11 @@ def voice_music_keyboard(uid: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def main_keyboard() -> ReplyKeyboardMarkup:
+def main_keyboard(uid: int = 0) -> ReplyKeyboardMarkup:
+    mute_label = "🔴 Молчать" if uid in muted else "🔇 Молчать"
     row1 = [
         KeyboardButton(text="🎙 Голос"),
-        KeyboardButton(text="🔇 Молчать"),
+        KeyboardButton(text=mute_label),
         KeyboardButton(text="🎼 Песни"),
         KeyboardButton(text="🎶 Музыка"),
     ]
@@ -457,7 +459,7 @@ async def ask_vision(image_bytes: bytes, question: str) -> str:
 
 
 async def load_memory() -> None:
-    global memory_facts, history, voice_enabled, voice_settings, model_settings
+    global memory_facts, history, voice_enabled, voice_settings, model_settings, muted
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(MEMORY_BIN_URL)
@@ -478,6 +480,9 @@ async def load_memory() -> None:
             ms = data.get("model_settings", {})
             if isinstance(ms, dict):
                 model_settings = {int(k): v for k, v in ms.items()}
+            mu = data.get("muted", [])
+            if isinstance(mu, list):
+                muted = {int(x) for x in mu}
     except Exception:
         pass
 
@@ -490,6 +495,7 @@ async def push_state() -> None:
             "voice_enabled": sorted(voice_enabled),
             "voice_settings": {str(k): v for k, v in voice_settings.items()},
             "model_settings": {str(k): v for k, v in model_settings.items()},
+            "muted": sorted(muted),
         }
         async with httpx.AsyncClient(timeout=30) as client:
             await client.put(MEMORY_BIN_URL, json=payload)
@@ -1052,7 +1058,7 @@ async def voice_reply(message: Message, text: str) -> None:
 
 @dp.message(CommandStart())
 async def start(message: Message) -> None:
-    await message.answer(ABOUT_TEXT, reply_markup=main_keyboard())
+    await message.answer(ABOUT_TEXT, reply_markup=main_keyboard(message.from_user.id))
 
 
 @dp.message(Command("voice"))
@@ -1117,12 +1123,25 @@ async def kb_balance(message: Message) -> None:
     await balance_cmd(message)
 
 
-@dp.message(F.text == "🔇 Молчать")
+@dp.message(F.text.in_({"🔇 Молчать", "🔴 Молчать"}))
 async def kb_voice_off(message: Message) -> None:
-    voice_enabled.discard(message.from_user.id)
-    sing_mode.discard(message.from_user.id)
+    uid = message.from_user.id
+    if uid in muted:
+        muted.discard(uid)
+        voice_enabled.add(uid)
+        await message.answer(
+            "🔊 Голос включён. Под текстом снова будут три кнопки.",
+            reply_markup=main_keyboard(uid),
+        )
+    else:
+        muted.add(uid)
+        voice_enabled.discard(uid)
+        sing_mode.discard(uid)
+        await message.answer(
+            "🔇 Молчу (кнопка красная). Отвечаю только текстом, без кнопок.",
+            reply_markup=main_keyboard(uid),
+        )
     asyncio.create_task(push_state())
-    await message.answer("Молчу. Отвечаю только текстом, без голоса и песен. 🤐")
 
 
 @dp.message(F.text == "🧠 Стереть память")
@@ -1513,7 +1532,7 @@ async def chat(message: Message) -> None:
         reply = strip_markdown(reply)
 
         draft_kwargs = {}
-        if any(w in tl for w in CREATIVE_WORDS):
+        if any(w in tl for w in CREATIVE_WORDS) and uid not in muted:
             drafts[uid] = reply
             draft_kwargs["reply_markup"] = draft_keyboard()
         await sent.edit_text(reply, **draft_kwargs)
@@ -1522,7 +1541,7 @@ async def chat(message: Message) -> None:
         asyncio.create_task(push_state())
         asyncio.create_task(update_memory(hist, reply))
 
-        if uid in voice_enabled and not draft_kwargs:
+        if uid in voice_enabled and not draft_kwargs and uid not in muted:
             try:
                 key = voice_settings.get(uid, DEFAULT_PRESET)
                 with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
