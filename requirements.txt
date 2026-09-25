@@ -8,3 +8,4 @@ numpy>=1.26
 pypdf>=4.0
 python-docx>=1.1
 gTTS>=2.5
+Pillow>=10.0
