@@ -587,6 +587,7 @@ async def _ffmpeg(args: list[str]) -> None:
 
 
 SING_SCALE = [262, 294, 330, 294, 392, 330, 294, 262, 330, 294, 262, 220]
+SING_SCALE_LOW = [131, 147, 165, 147, 196, 165, 147, 131, 165, 147, 131, 110]
 
 SR = 44100
 _C = [261.63, 329.63, 392.00]
@@ -842,8 +843,9 @@ async def generate_sing(text: str, out_path: str, preset_key: str = DEFAULT_PRES
     manipulation = praat_call(snd, "To Manipulation", 0.01, 60, 700)
     pitch_tier = praat_call("Create PitchTier", "melody", 0.0, duration)
     spans = _sounding_intervals(snd) or [(0.0, duration)]
+    scale = SING_SCALE if preset_key == "female" else SING_SCALE_LOW
     for idx, (t1, t2) in enumerate(spans):
-        base = SING_SCALE[idx % len(SING_SCALE)]
+        base = scale[idx % len(scale)]
         t = t1
         while t < t2:
             praat_call(pitch_tier, "Add point", t, float(base))
@@ -1253,9 +1255,10 @@ async def draft_voice_cb(cq: CallbackQuery) -> None:
     if not text:
         await cq.message.answer("Нет текста. Попроси сочинить заново.")
         return
-    msg = await cq.message.answer("🔊 Озвучиваю…")
+    key = voice_settings.get(uid, DEFAULT_PRESET)
+    vname = VOICE_PRESETS.get(key, {}).get("name", key)
+    msg = await cq.message.answer(f"🔊 Озвучиваю (голос: {vname})…")
     try:
-        key = voice_settings.get(uid, DEFAULT_PRESET)
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
             path = f.name
         await generate_voice(text[:500], path, key, fmt="ogg")
@@ -1274,9 +1277,10 @@ async def draft_sing_cb(cq: CallbackQuery) -> None:
     if not text:
         await cq.message.answer("Нет текста. Попроси сочинить заново.")
         return
-    msg = await cq.message.answer("🎵 Пою…")
+    key = voice_settings.get(uid, DEFAULT_PRESET)
+    vname = VOICE_PRESETS.get(key, {}).get("name", key)
+    msg = await cq.message.answer(f"🎵 Пою (голос: {vname})…")
     try:
-        key = voice_settings.get(uid, DEFAULT_PRESET)
         style = music_settings.get(uid, "none")
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
             path = f.name
