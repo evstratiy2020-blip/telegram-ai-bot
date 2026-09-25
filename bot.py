@@ -274,18 +274,21 @@ def voice_music_keyboard(uid: int) -> InlineKeyboardMarkup:
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
-    buttons = [
+    row1 = [
         KeyboardButton(text="🎙 Голос"),
         KeyboardButton(text="🔇 Молчать"),
         KeyboardButton(text="🎼 Песни"),
         KeyboardButton(text="🎶 Музыка"),
+    ]
+    row2 = [
         KeyboardButton(text="🖼 Картинка"),
         KeyboardButton(text="🤖 Модель"),
+        KeyboardButton(text="📊 Статус"),
+        KeyboardButton(text="💰 Баланс"),
     ]
+    keyboard = [row1, row2]
     if MINIAPP_URL:
-        buttons.append(KeyboardButton(text="🚀 Боня", web_app=WebAppInfo(url=MINIAPP_URL)))
-    half = (len(buttons) + 1) // 2
-    keyboard = [buttons[:half], buttons[half:]]
+        keyboard.append([KeyboardButton(text="🚀 Боня", web_app=WebAppInfo(url=MINIAPP_URL))])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
@@ -1068,6 +1071,16 @@ async def kb_music(message: Message) -> None:
 @dp.message(F.text == "🤖 Модель")
 async def kb_model(message: Message) -> None:
     await message.answer("🤖 Выбери модель ИИ:", reply_markup=model_keyboard(message.from_user.id))
+
+
+@dp.message(F.text == "📊 Статус")
+async def kb_status(message: Message) -> None:
+    await status_cmd(message)
+
+
+@dp.message(F.text == "💰 Баланс")
+async def kb_balance(message: Message) -> None:
+    await balance_cmd(message)
 
 
 @dp.message(F.text == "🔇 Молчать")
