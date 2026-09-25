@@ -1522,7 +1522,7 @@ async def chat(message: Message) -> None:
         asyncio.create_task(push_state())
         asyncio.create_task(update_memory(hist, reply))
 
-        if uid in voice_enabled:
+        if uid in voice_enabled and not draft_kwargs:
             try:
                 key = voice_settings.get(uid, DEFAULT_PRESET)
                 with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
