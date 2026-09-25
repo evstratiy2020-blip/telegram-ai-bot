@@ -32,11 +32,12 @@ function authHeaders() {
   return h;
 }
 
-function voiceUrl(text) { return '/api/voice?text=' + encodeURIComponent(text); }
+var voiceKey = 'bonya';
+function voiceUrl(text) { return '/api/voice?text=' + encodeURIComponent(text) + '&voice=' + voiceKey; }
 function singUrl(text) {
   var el = document.getElementById('musicStyle');
   var st = el ? el.value : 'none';
-  return '/api/sing?text=' + encodeURIComponent(text) + '&style=' + encodeURIComponent(st);
+  return '/api/sing?text=' + encodeURIComponent(text) + '&style=' + encodeURIComponent(st) + '&voice=' + voiceKey;
 }
 
 /* ---------- Вход ---------- */
@@ -239,7 +240,7 @@ async function sendMessage() {
 send.addEventListener('click', sendMessage);
 input.addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
 
-voiceBtn.addEventListener('click', function () {
+if (voiceBtn) voiceBtn.addEventListener('click', function () {
   unlockAudio();
   soundOn = !soundOn;
   if (!soundOn) stopAudio();
@@ -255,7 +256,7 @@ soundBtn.addEventListener('click', function () {
   soundBtn.classList.toggle('on', soundOn);
 });
 
-singBtn.addEventListener('click', function () {
+if (singBtn) singBtn.addEventListener('click', function () {
   unlockAudio();
   singMode = !singMode;
   singBtn.classList.toggle('on', singMode);
@@ -303,8 +304,167 @@ if (micBtn) {
   });
 }
 
-voiceBtn.classList.add('on');
-soundBtn.classList.add('on');
+if (voiceBtn) voiceBtn.classList.add('on');
+if (soundBtn) soundBtn.classList.add('on');
+
+/* ================= ГОЛОС ================= */
+var VOICES = [
+  { key: 'male', name: 'Мужской' },
+  { key: 'male_low', name: 'Мужской низкий' },
+  { key: 'female', name: 'Женский' },
+  { key: 'bonya', name: 'Боня' },
+  { key: 'mono', name: 'Робот-монотонный' }
+];
+var voicePanel = document.getElementById('voicePanel');
+var voiceListEl = document.getElementById('voiceList');
+
+function renderVoices() {
+  if (!voiceListEl) return;
+  voiceListEl.innerHTML = VOICES.map(function (v) {
+    return '<button class="voice-btn ' + (v.key === voiceKey ? 'on' : '') + '" data-v="' + v.key + '">🎤 ' + v.name + '</button>';
+  }).join('');
+  Array.prototype.forEach.call(voiceListEl.querySelectorAll('.voice-btn'), function (b) {
+    b.addEventListener('click', function () {
+      voiceKey = b.dataset.v;
+      renderVoices();
+      var cv = document.getElementById('cartoonVoice');
+      if (cv) cv.value = voiceKey;
+      if (voicePanel) voicePanel.classList.add('hidden');
+    });
+  });
+}
+renderVoices();
+
+var voicePickBtn = document.getElementById('voicePickBtn');
+if (voicePickBtn) voicePickBtn.addEventListener('click', function () {
+  unlockAudio();
+  if (voicePanel) voicePanel.classList.toggle('hidden');
+  var cart = document.getElementById('cartoon');
+  if (cart) cart.classList.add('hidden');
+});
+
+/* ================= МУЛЬТИК ================= */
+var CHAR_COUNT = 9;
+var LEVELS = 6;
+var currentChar = 8;
+var cartoonEl = document.getElementById('cartoon');
+var cartoonImg = document.getElementById('cartoonImg');
+var cartoonChars = document.getElementById('cartoonChars');
+var cartoonVoice = document.getElementById('cartoonVoice');
+var cartoonMusic = document.getElementById('cartoonMusic');
+var cartoonText = document.getElementById('cartoonText');
+
+function setLevel(lvl) {
+  var f = Math.max(0, Math.min(LEVELS - 1, Math.round(lvl * (LEVELS - 1))));
+  if (cartoonImg) cartoonImg.src = 'mult/c' + currentChar + '_' + f + '.png';
+}
+
+if (cartoonChars) {
+  var h = '';
+  for (var i = 0; i < CHAR_COUNT; i++) {
+    h += '<button class="charbtn ' + (i === currentChar ? 'on' : '') + '" data-c="' + i + '"><img src="mult/c' + i + '_0.png" alt=""></button>';
+  }
+  cartoonChars.innerHTML = h;
+  Array.prototype.forEach.call(cartoonChars.querySelectorAll('.charbtn'), function (b) {
+    b.addEventListener('click', function () {
+      currentChar = parseInt(b.dataset.c, 10);
+      setLevel(0);
+      Array.prototype.forEach.call(cartoonChars.querySelectorAll('.charbtn'), function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+    });
+  });
+}
+
+if (cartoonVoice) {
+  cartoonVoice.innerHTML = VOICES.map(function (v) {
+    return '<option value="' + v.key + '"' + (v.key === voiceKey ? ' selected' : '') + '>' + v.name + '</option>';
+  }).join('');
+  cartoonVoice.addEventListener('change', function () { voiceKey = cartoonVoice.value; renderVoices(); });
+}
+
+var actx = null, cartAudio = null, cartRaf = null;
+
+function audioCtx() {
+  if (!actx) {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    actx = new AC();
+  }
+  return actx;
+}
+
+function stopCartoon() {
+  if (cartAudio) { try { cartAudio.pause(); } catch (e) {} cartAudio = null; }
+  if (cartRaf) cancelAnimationFrame(cartRaf);
+  cartRaf = null;
+  setLevel(0);
+}
+
+function playCartoon(url) {
+  stopAudio();
+  stopCartoon();
+  unlockAudio();
+  var c = audioCtx();
+  if (c.state === 'suspended') c.resume();
+  var audio = new Audio(url);
+  cartAudio = audio;
+  try {
+    var src = c.createMediaElementSource(audio);
+    var an = c.createAnalyser();
+    an.fftSize = 512;
+    src.connect(an);
+    an.connect(c.destination);
+    var data = new Uint8Array(an.frequencyBinCount);
+    function loop() {
+      an.getByteFrequencyData(data);
+      var sum = 0;
+      for (var i = 0; i < data.length; i++) sum += data[i];
+      setLevel(Math.min(1, (sum / data.length) / 55));
+      cartRaf = requestAnimationFrame(loop);
+    }
+    audio.onplay = loop;
+    audio.onended = function () { if (cartRaf) cancelAnimationFrame(cartRaf); cartRaf = null; setLevel(0); };
+  } catch (e) {
+    audio.onplay = function () { window.BonyaAvatar && window.BonyaAvatar.startTalking(); };
+    audio.onended = function () { window.BonyaAvatar && window.BonyaAvatar.stopTalking(); setLevel(0); };
+  }
+  audio.onerror = function () { setLevel(0); };
+  var p = audio.play();
+  if (p && p.catch) p.catch(function () {});
+}
+
+var cartoonBtn = document.getElementById('cartoonBtn');
+var cartoonClose = document.getElementById('cartoonClose');
+var speakBtn = document.getElementById('speakBtn');
+var singBtn2 = document.getElementById('singBtn2');
+
+if (cartoonBtn) cartoonBtn.addEventListener('click', function () {
+  unlockAudio();
+  if (voicePanel) voicePanel.classList.add('hidden');
+  if (cartoonEl) cartoonEl.classList.remove('hidden');
+  setLevel(0);
+});
+if (cartoonClose) cartoonClose.addEventListener('click', function () {
+  stopCartoon();
+  if (cartoonEl) cartoonEl.classList.add('hidden');
+});
+if (speakBtn) speakBtn.addEventListener('click', function () {
+  var t = (cartoonText.value || '').trim();
+  if (!t) { cartoonText.focus(); return; }
+  playCartoon('/api/voice?text=' + encodeURIComponent(t) + '&voice=' + voiceKey);
+});
+if (singBtn2) singBtn2.addEventListener('click', function () {
+  var t = (cartoonText.value || '').trim();
+  if (!t) { cartoonText.focus(); return; }
+  var st = cartoonMusic ? cartoonMusic.value : 'none';
+  playCartoon('/api/sing?text=' + encodeURIComponent(t) + '&style=' + encodeURIComponent(st) + '&voice=' + voiceKey);
+});
+
+setInterval(function () {
+  if (cartAudio && !cartAudio.paused) return;
+  if (!cartoonEl || cartoonEl.classList.contains('hidden')) return;
+  if (cartoonImg) cartoonImg.src = 'mult/c' + currentChar + '_blink.png';
+  setTimeout(function () { if (!(cartAudio && !cartAudio.paused)) setLevel(0); }, 150);
+}, 4200);
 
 addMessage('Привет! Я Боня — твой живой ИИ-помощник. Спроси меня о чём-нибудь! 🤖', 'bot', voiceUrl('Привет! Я Боня. Спроси меня о чём-нибудь!'));
 checkAuth();
