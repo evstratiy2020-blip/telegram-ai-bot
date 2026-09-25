@@ -1521,17 +1521,6 @@ async def chat(message: Message) -> None:
         history[uid] = hist[-HISTORY_LIMIT:]
         asyncio.create_task(push_state())
         asyncio.create_task(update_memory(hist, reply))
-
-        if uid in voice_enabled and not draft_kwargs:
-            try:
-                key = voice_settings.get(uid, DEFAULT_PRESET)
-                with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
-                    audio_path = f.name
-                await generate_voice(reply[:300], audio_path, key, fmt="ogg")
-                await message.answer_voice(FSInputFile(audio_path))
-                os.remove(audio_path)
-            except Exception:
-                pass
     except httpx.HTTPStatusError as exc:
         await sent.edit_text(f"Ошибка API ({exc.response.status_code}): {exc.response.text[:200]}")
     except Exception as exc:
