@@ -16,6 +16,8 @@ from urllib.parse import parse_qsl, quote, unquote
 import edge_tts
 import httpx
 
+import cartoon
+
 try:
     import parselmouth
     from parselmouth.praat import call as praat_call
@@ -180,6 +182,8 @@ voice_edit: set[int] = set()
 voice_drafts: dict[int, str] = {}
 drafts: dict[int, str] = {}
 draft_edit: set[int] = set()
+cartoon_state: dict[int, dict] = {}
+cartoon_await: set[int] = set()
 last_file: dict[int, str] = {}
 memory_facts: list[str] = []
 
@@ -281,6 +285,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         KeyboardButton(text="🔇 Молчать"),
         KeyboardButton(text="🎼 Песни"),
         KeyboardButton(text="🎶 Музыка"),
+        KeyboardButton(text="🎬 Мультик"),
     ]
     row2 = [
         KeyboardButton(text="🤖 Модель"),
@@ -1172,6 +1177,91 @@ async def kb_model(message: Message) -> None:
     await message.answer("🤖 Выбери модель ИИ:", reply_markup=model_keyboard(message.from_user.id))
 
 
+CARTOON_VOICES = [(k, v["name"]) for k, v in VOICE_PRESETS.items()]
+CARTOON_MUSIC = [("none", "Без музыки")] + [(k, MUSIC_NAMES[k]) for k in MUSIC_NAMES if k != "none"]
+
+
+def cartoon_char_kb() -> InlineKeyboardMarkup:
+    btns = [InlineKeyboardButton(text=str(i + 1), callback_data=f"cart:c:{i}") for i in range(len(cartoon.CHARS))]
+    rows = [btns[i:i + 5] for i in range(0, len(btns), 5)]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def cartoon_voice_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=name, callback_data=f"cart:v:{k}")] for k, name in CARTOON_VOICES
+    ])
+
+
+def cartoon_music_kb() -> InlineKeyboardMarkup:
+    rows = [CARTOON_MUSIC[i:i + 2] for i in range(0, len(CARTOON_MUSIC), 2)]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=lab, callback_data=f"cart:m:{k}") for k, lab in row] for row in rows
+    ])
+
+
+def cartoon_go_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🗣 Сказать", callback_data="cart:go:say"),
+        InlineKeyboardButton(text="🎵 Спеть", callback_data="cart:go:sing"),
+    ]])
+
+
+@dp.message(F.text == "🎬 Мультик")
+async def kb_cartoon(message: Message) -> None:
+    uid = message.from_user.id
+    cartoon_state[uid] = {}
+    await message.answer_photo(
+        BufferedInputFile(cartoon.grid_png(), filename="chars.png"),
+        caption="🎬 Выбери персонажа (1–9):",
+        reply_markup=cartoon_char_kb(),
+    )
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("cart:"))
+async def cartoon_cb(cq: CallbackQuery) -> None:
+    uid = cq.from_user.id
+    st = cartoon_state.setdefault(uid, {})
+    parts = cq.data.split(":")
+    if parts[1] == "c":
+        st["char"] = int(parts[2])
+        await cq.message.answer("🎙 Выбери голос:", reply_markup=cartoon_voice_kb())
+    elif parts[1] == "v":
+        st["voice"] = parts[2]
+        await cq.message.answer("🎶 Выбери музыку:", reply_markup=cartoon_music_kb())
+    elif parts[1] == "m":
+        st["music"] = parts[2]
+        await cq.message.answer("Что сделать с текстом?", reply_markup=cartoon_go_kb())
+    elif parts[1] == "go":
+        st["mode"] = parts[2]
+        cartoon_await.add(uid)
+        await cq.message.answer("✍️ Напиши текст для мультика одним сообщением.")
+    await cq.answer()
+
+
+async def render_cartoon(message: Message, text: str) -> None:
+    uid = message.from_user.id
+    st = cartoon_state.get(uid, {})
+    char = int(st.get("char", 8))
+    voice = st.get("voice", DEFAULT_PRESET)
+    music = st.get("music", "none")
+    mode = st.get("mode", "say")
+    sent = await message.answer("🎬 Рисую мультик…")
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = os.path.join(tmp, "a.mp3")
+            if mode == "sing":
+                await generate_sing(text[:300], audio, voice, fmt="mp3", style=music)
+            else:
+                await generate_voice(text[:300], audio, voice, fmt="mp3")
+            out = os.path.join(tmp, "cartoon.mp4")
+            await asyncio.to_thread(cartoon.render_video, char, audio, out, 260)
+            await sent.delete()
+            await message.answer_video(FSInputFile(out), caption="🎬 Мультик")
+    except Exception as exc:
+        await sent.edit_text(f"Не получилось сделать мультик: {exc}")
+
+
 @dp.message(F.text == "📊 Статус")
 async def kb_status(message: Message) -> None:
     await status_cmd(message)
@@ -1517,6 +1607,12 @@ async def chat(message: Message) -> None:
         instr = (message.text or "").strip()
         if instr:
             await revise_draft(message, instr)
+        return
+    if uid in cartoon_await:
+        cartoon_await.discard(uid)
+        txt = (message.text or "").strip()
+        if txt:
+            await render_cartoon(message, txt)
         return
     if uid in sing_mode:
         text = (message.text or "").strip()
