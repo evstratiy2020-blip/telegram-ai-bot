@@ -178,6 +178,8 @@ song_drafts: dict[int, str] = {}
 song_edit: set[int] = set()
 voice_edit: set[int] = set()
 voice_drafts: dict[int, str] = {}
+drafts: dict[int, str] = {}
+draft_edit: set[int] = set()
 last_file: dict[int, str] = {}
 memory_facts: list[str] = []
 
@@ -941,6 +943,37 @@ def song_keyboard() -> InlineKeyboardMarkup:
     ]])
 
 
+CREATIVE_WORDS = ("стих", "стиш", "песн", "сочин", "поэм", "поздрав", "послан", "молитв", "притч", "тост")
+
+
+def draft_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔊 Озвучить", callback_data="draft:voice"),
+            InlineKeyboardButton(text="🎵 Спеть", callback_data="draft:sing"),
+        ],
+        [InlineKeyboardButton(text="✏️ Редактировать", callback_data="draft:edit")],
+    ])
+
+
+async def revise_draft(message: Message, instr: str) -> None:
+    uid = message.from_user.id
+    base = drafts.get(uid, "")
+    sent = await message.answer("✏️ Правлю…")
+    try:
+        reply = await ask_llm([
+            {"role": "user", "content": (
+                "Вот текст:\n" + base + "\n\nЗадача: " + instr +
+                "\nВерни только новый текст, без пояснений."
+            )}
+        ], resolve_llm(uid))
+        reply = strip_markdown(reply or "")
+        drafts[uid] = reply
+        await sent.edit_text(reply, reply_markup=draft_keyboard())
+    except Exception as exc:
+        await sent.edit_text(f"Ошибка: {exc}")
+
+
 def voice_buttons() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="▶️ Запуск", callback_data="vtext:play"),
@@ -1212,6 +1245,56 @@ async def song_edit_cb(cq: CallbackQuery) -> None:
     await cq.message.answer("✏️ Напиши, что доработать (например: «сделай длиннее», «добавь про море»).")
 
 
+@dp.callback_query(lambda c: c.data == "draft:voice")
+async def draft_voice_cb(cq: CallbackQuery) -> None:
+    uid = cq.from_user.id
+    text = (drafts.get(uid) or "").strip()
+    await cq.answer()
+    if not text:
+        await cq.message.answer("Нет текста. Попроси сочинить заново.")
+        return
+    msg = await cq.message.answer("🔊 Озвучиваю…")
+    try:
+        key = voice_settings.get(uid, DEFAULT_PRESET)
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+            path = f.name
+        await generate_voice(text[:500], path, key, fmt="ogg")
+        await msg.delete()
+        await cq.message.answer_voice(FSInputFile(path))
+        os.remove(path)
+    except Exception as exc:
+        await msg.edit_text(f"Не получилось озвучить: {exc}")
+
+
+@dp.callback_query(lambda c: c.data == "draft:sing")
+async def draft_sing_cb(cq: CallbackQuery) -> None:
+    uid = cq.from_user.id
+    text = (drafts.get(uid) or "").strip()
+    await cq.answer()
+    if not text:
+        await cq.message.answer("Нет текста. Попроси сочинить заново.")
+        return
+    msg = await cq.message.answer("🎵 Пою…")
+    try:
+        key = voice_settings.get(uid, DEFAULT_PRESET)
+        style = music_settings.get(uid, "none")
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+            path = f.name
+        await generate_sing(text, path, key, fmt="ogg", style=style)
+        await msg.delete()
+        await cq.message.answer_voice(FSInputFile(path))
+        os.remove(path)
+    except Exception as exc:
+        await msg.edit_text(f"Не получилось спеть: {exc}")
+
+
+@dp.callback_query(lambda c: c.data == "draft:edit")
+async def draft_edit_cb(cq: CallbackQuery) -> None:
+    draft_edit.add(cq.from_user.id)
+    await cq.answer()
+    await cq.message.answer("✏️ Напиши, что изменить (например: «сделай короче», «добавь про море»).")
+
+
 @dp.message(Command("new"))
 async def clear_history(message: Message) -> None:
     history.pop(message.from_user.id, None)
@@ -1360,6 +1443,12 @@ async def chat(message: Message) -> None:
         if instr:
             await revise_song(message, instr)
         return
+    if uid in draft_edit:
+        draft_edit.discard(uid)
+        instr = (message.text or "").strip()
+        if instr:
+            await revise_draft(message, instr)
+        return
     if uid in sing_mode:
         text = (message.text or "").strip()
         if text:
@@ -1379,7 +1468,7 @@ async def chat(message: Message) -> None:
     if any(w in tl for w in ("нарисуй", "намалюй", "сгенерируй картинку", "згенеруй картинку", "намалюй картинку")):
         await draw_image(message, text0)
         return
-    if any(w in tl for w in ("спой", "спеть", "песн")):
+    if any(w in tl for w in ("спой", "спеть")):
         prev = last_assistant_text(uid)
         ref = any(w in tl for w in ("его", "её", "ее", "ней", "него", "неё", "это", "этот", "эту", "эти", "тот", "ту", "стих"))
         bare = tl.strip(" !?.,") in ("спой", "спеть", "спой пожалуйста", "спой его", "спой это")
@@ -1419,7 +1508,11 @@ async def chat(message: Message) -> None:
             reply = "(пустой ответ от модели)"
         reply = strip_markdown(reply)
 
-        await sent.edit_text(reply)
+        draft_kwargs = {}
+        if any(w in tl for w in CREATIVE_WORDS):
+            drafts[uid] = reply
+            draft_kwargs["reply_markup"] = draft_keyboard()
+        await sent.edit_text(reply, **draft_kwargs)
         hist.append({"role": "assistant", "content": reply})
         history[uid] = hist[-HISTORY_LIMIT:]
         asyncio.create_task(push_state())
