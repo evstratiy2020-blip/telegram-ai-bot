@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Боня — живой ИИ-помощник</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
   <div class="app">
@@ -60,9 +60,31 @@
         <button class="send" id="send" title="Отправить">➤</button>
       </div>
       <div class="composer-buttons">
-        <button class="icon-btn mic" id="voiceBtn" title="Голос">🎙</button>
-        <button class="icon-btn" id="singBtn" title="Петь">🎵</button>
-        <select id="musicStyle" class="music-select" title="Музыка для пения">
+        <button class="mode-btn" id="cartoonBtn">🎬 Мультик</button>
+        <button class="mode-btn" id="voicePickBtn">🎙 Голос</button>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Выбор голоса -->
+  <div id="voicePanel" class="sheet hidden">
+    <div class="sheet-head"><span>Выбери голос</span><button class="icon-btn" data-close="voicePanel">✕</button></div>
+    <div class="voice-list" id="voiceList"></div>
+  </div>
+
+  <!-- Мультик -->
+  <div id="cartoon" class="fullscreen hidden">
+    <div class="sheet-head">
+      <span>🎬 Мультик</span>
+      <button class="icon-btn" id="cartoonClose">✕</button>
+    </div>
+    <div class="cartoon-stage">
+      <img id="cartoonImg" src="mult/c8_0.png" alt="персонаж">
+    </div>
+    <div class="cartoon-chars" id="cartoonChars"></div>
+    <div class="cartoon-controls">
+      <label>Музыка
+        <select id="cartoonMusic" class="music-select">
           <option value="none">Без музыки</option>
           <option value="pop">Поп</option>
           <option value="ballad">Баллада</option>
@@ -77,8 +99,16 @@
           <option value="sad">Грустный</option>
           <option value="disco">Диско</option>
         </select>
-      </div>
-    </footer>
+      </label>
+      <label>Голос
+        <select id="cartoonVoice" class="music-select"></select>
+      </label>
+    </div>
+    <input id="cartoonText" class="cartoon-text" placeholder="Текст для мультика…" autocomplete="off">
+    <div class="cartoon-actions">
+      <button id="speakBtn" class="primary">🗣 Сказать</button>
+      <button id="singBtn2" class="primary sing">🎵 Спеть</button>
+    </div>
   </div>
 
   <div id="login" class="hidden">
@@ -89,7 +119,7 @@
     <div class="err" id="loginErr"></div>
   </div>
 
-  <script src="avatar.js?v=2"></script>
-  <script src="script.js?v=2"></script>
+  <script src="avatar.js?v=3"></script>
+  <script src="script.js?v=3"></script>
 </body>
 </html>
