@@ -281,14 +281,13 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         KeyboardButton(text="🎶 Музыка"),
     ]
     row2 = [
-        KeyboardButton(text="🖼 Картинка"),
         KeyboardButton(text="🤖 Модель"),
         KeyboardButton(text="📊 Статус"),
         KeyboardButton(text="💰 Баланс"),
     ]
-    keyboard = [row1, row2]
     if MINIAPP_URL:
-        keyboard.append([KeyboardButton(text="🚀 Боня", web_app=WebAppInfo(url=MINIAPP_URL))])
+        row2.insert(0, KeyboardButton(text="🚀 Боня", web_app=WebAppInfo(url=MINIAPP_URL)))
+    keyboard = [row1, row2]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
