@@ -184,6 +184,7 @@ drafts: dict[int, str] = {}
 draft_edit: set[int] = set()
 cartoon_state: dict[int, dict] = {}
 cartoon_await: set[int] = set()
+cartoon_edit: set[int] = set()
 last_file: dict[int, str] = {}
 memory_facts: list[str] = []
 
@@ -1235,12 +1236,60 @@ async def cartoon_cb(cq: CallbackQuery) -> None:
     elif parts[1] == "go":
         st["mode"] = parts[2]
         cartoon_await.add(uid)
-        await cq.message.answer("✍️ Напиши текст для мультика одним сообщением.")
+        await cq.message.answer("✍️ Напиши текст — или напиши «придумай приветствие / стих / песню».")
+    elif parts[1] == "run":
+        await cq.answer()
+        txt = (st.get("text") or "").strip()
+        if txt:
+            await render_cartoon(cq.message, txt, uid)
+        return
+    elif parts[1] == "edit":
+        cartoon_edit.add(uid)
+        await cq.answer()
+        await cq.message.answer("✏️ Напиши, что изменить (или пришли новый текст).")
+        return
     await cq.answer()
 
 
-async def render_cartoon(message: Message, text: str) -> None:
-    uid = message.from_user.id
+def cartoon_text_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="▶️ Запуск", callback_data="cart:run"),
+        InlineKeyboardButton(text="✏️ Редактировать", callback_data="cart:edit"),
+    ]])
+
+
+async def compose_cartoon_text(message: Message, request: str, uid: int) -> None:
+    st = cartoon_state.get(uid, {})
+    mode = st.get("mode", "say")
+    sent = await message.answer("✍️ Придумываю текст…")
+    what = "короткую песню (2–4 строки)" if mode == "sing" else "короткое послание (1–3 предложения)"
+    prompt = f"Сочини {what} по запросу: {request}. Верни только текст, без пояснений."
+    try:
+        text = await ask_llm([{"role": "user", "content": prompt}], resolve_llm(uid))
+        text = strip_markdown(text or "").strip()
+        st["text"] = text
+        cartoon_state[uid] = st
+        await sent.edit_text(text, reply_markup=cartoon_text_kb())
+    except Exception as exc:
+        await sent.edit_text(f"Ошибка: {exc}")
+
+
+async def revise_cartoon_text(message: Message, instr: str, uid: int) -> None:
+    st = cartoon_state.get(uid, {})
+    base = st.get("text", "")
+    sent = await message.answer("✏️ Правлю…")
+    prompt = f"Вот текст:\n{base}\n\nЗадача: {instr}\nВерни только новый текст, без пояснений."
+    try:
+        text = await ask_llm([{"role": "user", "content": prompt}], resolve_llm(uid))
+        text = strip_markdown(text or "").strip()
+        st["text"] = text
+        cartoon_state[uid] = st
+        await sent.edit_text(text, reply_markup=cartoon_text_kb())
+    except Exception as exc:
+        await sent.edit_text(f"Ошибка: {exc}")
+
+
+async def render_cartoon(message: Message, text: str, uid: int) -> None:
     st = cartoon_state.get(uid, {})
     char = int(st.get("char", 8))
     voice = st.get("voice", DEFAULT_PRESET)
@@ -1608,11 +1657,21 @@ async def chat(message: Message) -> None:
         if instr:
             await revise_draft(message, instr)
         return
+    if uid in cartoon_edit:
+        cartoon_edit.discard(uid)
+        instr = (message.text or "").strip()
+        if instr:
+            await revise_cartoon_text(message, instr, uid)
+        return
     if uid in cartoon_await:
         cartoon_await.discard(uid)
         txt = (message.text or "").strip()
         if txt:
-            await render_cartoon(message, txt)
+            tl2 = txt.lower()
+            if any(w in tl2 for w in CREATIVE_WORDS):
+                await compose_cartoon_text(message, txt, uid)
+            else:
+                await render_cartoon(message, txt, uid)
         return
     if uid in sing_mode:
         text = (message.text or "").strip()
