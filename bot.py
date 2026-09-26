@@ -435,6 +435,17 @@ async def ask_llm(messages: list[dict], provider=None) -> str:
     return data["choices"][0]["message"]["content"].strip()
 
 
+async def ask_llm_safe(uid: int, messages: list[dict]) -> str:
+    try:
+        return await ask_llm(messages, resolve_llm(uid))
+    except Exception:
+        if model_settings.get(uid, DEFAULT_MODEL_KEY) != DEFAULT_MODEL_KEY:
+            model_settings[uid] = DEFAULT_MODEL_KEY
+            asyncio.create_task(push_state())
+            return await ask_llm(messages)
+        raise
+
+
 async def ask_vision(image_bytes: bytes, question: str) -> str:
     b64 = base64.b64encode(image_bytes).decode()
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
@@ -1265,7 +1276,7 @@ async def compose_cartoon_text(message: Message, request: str, uid: int) -> None
     what = "короткую песню (2–4 строки)" if mode == "sing" else "короткое послание (1–3 предложения)"
     prompt = f"Сочини {what} по запросу: {request}. Верни только текст, без пояснений."
     try:
-        text = await ask_llm([{"role": "user", "content": prompt}], resolve_llm(uid))
+        text = await ask_llm_safe(uid, [{"role": "user", "content": prompt}])
         text = strip_markdown(text or "").strip()
         st["text"] = text
         cartoon_state[uid] = st
@@ -1280,7 +1291,7 @@ async def revise_cartoon_text(message: Message, instr: str, uid: int) -> None:
     sent = await message.answer("✏️ Правлю…")
     prompt = f"Вот текст:\n{base}\n\nЗадача: {instr}\nВерни только новый текст, без пояснений."
     try:
-        text = await ask_llm([{"role": "user", "content": prompt}], resolve_llm(uid))
+        text = await ask_llm_safe(uid, [{"role": "user", "content": prompt}])
         text = strip_markdown(text or "").strip()
         st["text"] = text
         cartoon_state[uid] = st
