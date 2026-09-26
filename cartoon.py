@@ -16,11 +16,117 @@ CHARS = [
     dict(name="Девушка", skin=(250, 220, 190), hair=(205, 150, 60), style="long", acc="bow", beard="none", cloth=(205, 80, 140)),
     dict(name="Робот", skin=(200, 210, 220), hair=(150, 160, 175), style="bald", acc="antenna", beard="none", cloth=(90, 95, 110)),
     dict(name="Бородач", skin=(235, 195, 160), hair=(80, 55, 45), style="short", acc="none", beard="full", cloth=(120, 80, 170)),
-    dict(name="Модник", skin=(120, 85, 60), hair=(20, 20, 25), style="mohawk", acc="glasses", beard="mustache", cloth=(25, 25, 30)),
-    dict(name="Кудрявый", skin=(250, 224, 196), hair=(185, 95, 45), style="curly", acc="none", beard="none", cloth=(240, 170, 40)),
-    dict(name="Король", skin=(245, 210, 175), hair=(210, 180, 60), style="short", acc="crown", beard="mustache", cloth=(150, 30, 50)),
+    dict(name="Мужчина", style="man3d"),
+    dict(name="Женщина", style="woman3d"),
+    dict(name="Робот 3D", style="robot3d"),
     dict(name="Боня", style="bonya"),
 ]
+
+
+def _radial(img, box, c_in, c_out, lx=-0.22, ly=-0.32, shape="ellipse", radius=28):
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    nx = (xx / w - (0.5 + lx)) * 1.45
+    ny = (yy / h - (0.5 + ly)) * 1.45
+    rr = np.clip(np.sqrt(nx * nx + ny * ny), 0, 1)
+    a = np.array(c_in, dtype=np.float32)
+    b = np.array(c_out, dtype=np.float32)
+    arr = (a[None, None, :] * (1 - rr[..., None]) + b[None, None, :] * rr[..., None]).astype(np.uint8)
+    patch = Image.fromarray(arr, "RGB")
+    m = Image.new("L", (w, h), 0)
+    md = ImageDraw.Draw(m)
+    if shape == "ellipse":
+        md.ellipse([0, 0, w - 1, h - 1], fill=255)
+    elif shape == "rect":
+        md.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
+    else:
+        md.chord([0, 0, w - 1, h - 1], 180, 360, fill=255)
+    img.paste(patch, (x0, y0), m)
+
+
+def _eyes3d(d, cx, cy, ex, iris, blink):
+    if blink <= 0.2:
+        for sx in (-ex, ex):
+            d.line([cx + sx - 22, cy, cx + sx + 22, cy], fill=(60, 45, 40), width=5)
+        return
+    for sx in (-ex, ex):
+        d.ellipse([cx + sx - 26, cy - 20, cx + sx + 26, cy + 20], fill=(250, 250, 252), outline=(120, 90, 70), width=2)
+        d.ellipse([cx + sx - 12, cy - 12, cx + sx + 12, cy + 12], fill=iris)
+        d.ellipse([cx + sx - 6, cy - 6, cx + sx + 6, cy + 6], fill=(20, 16, 16))
+        d.ellipse([cx + sx - 8, cy - 13, cx + sx - 2, cy - 7], fill=(255, 255, 255))
+
+
+def _mouth3d(d, cx, cy, a, w, lip):
+    mh = int(6 + 40 * a)
+    d.ellipse([cx - w, cy, cx + w, cy + mh], fill=(70, 18, 24), outline=lip, width=3)
+    if mh > 18:
+        d.ellipse([cx - w + 16, cy + mh - 24, cx + w - 16, cy + mh - 4], fill=(210, 90, 105))
+
+
+def draw_man(a, blink=1.0):
+    img = Image.new("RGB", (W, H), (246, 249, 253))
+    d = ImageDraw.Draw(img)
+    cx, cy, r = W // 2, H // 2 + 12, 116
+    _radial(img, [cx - 122, cy + r - 46, cx + 122, cy + r + 150], (78, 140, 216), (24, 64, 132), -0.2, -0.5, "rect", 34)
+    for sx in (-1, 1):
+        _radial(img, [cx + sx * 90 - 18, cy + r - 30, cx + sx * 90 + 18, cy + r + 60], (86, 148, 222), (30, 72, 140), -0.2, -0.4)
+    for sx in (-1, 1):
+        _radial(img, [cx + sx * (r - 6) - 14, cy - 6, cx + sx * (r - 6) + 14, cy + 46], (250, 220, 188), (198, 152, 116), -0.2, -0.3)
+    _radial(img, [cx - r, cy - r, cx + r, cy + r], (253, 224, 192), (198, 150, 112), -0.24, -0.34)
+    d.chord([cx - r - 4, cy - r - 6, cx + r + 4, cy + 6], 180, 360, fill=(40, 32, 28))
+    d.arc([cx - r, cy - r, cx + r, cy - 20], 200, 320, fill=(82, 66, 54), width=5)
+    d.polygon([(cx - 6, cy - 24), (cx - 20, cy + 30), (cx + 16, cy + 30)], fill=(224, 176, 138))
+    d.polygon([(cx - 6, cy - 24), (cx + 16, cy + 30), (cx + 2, cy + 30)], fill=(196, 146, 108))
+    for sx in (-1, 1):
+        d.line([cx + sx * 50 - 30, cy - 66, cx + sx * 50 + 30, cy - 74], fill=(46, 36, 30), width=7)
+    _eyes3d(d, cx, cy - 36, 50, (76, 122, 168), blink)
+    _mouth3d(d, cx, cy + 52, a, 62, (168, 96, 84))
+    return img
+
+
+def draw_woman(a, blink=1.0):
+    img = Image.new("RGB", (W, H), (246, 249, 253))
+    d = ImageDraw.Draw(img)
+    cx, cy, r = W // 2, H // 2 + 12, 116
+    d.rounded_rectangle([cx - r - 30, cy - r + 10, cx - r + 22, cy + r + 120], 18, fill=(120, 70, 40))
+    d.rounded_rectangle([cx + r - 22, cy - r + 10, cx + r + 30, cy + r + 120], 18, fill=(120, 70, 40))
+    _radial(img, [cx - 122, cy + r - 46, cx + 122, cy + r + 150], (236, 110, 170), (150, 40, 110), -0.2, -0.5, "rect", 34)
+    _radial(img, [cx - r, cy - r, cx + r, cy + r], (255, 229, 206), (214, 166, 136), -0.24, -0.34)
+    _radial(img, [cx - r - 8, cy - r - 12, cx + r + 8, cy + 30], (140, 85, 45), (70, 40, 22), -0.2, -0.4, "chord")
+    d.chord([cx - r - 4, cy - r - 4, cx + r + 4, cy + 8], 180, 360, fill=(96, 58, 32))
+    for sx in (-1, 1):
+        d.ellipse([cx + sx * 48 - 30, cy + 22, cx + sx * 48 + 30, cy + 44], fill=(236, 140, 150))
+    for sx in (-1, 1):
+        d.line([cx + sx * 50 - 26, cy - 62, cx + sx * 50 + 26, cy - 70], fill=(80, 52, 34), width=6)
+    _eyes3d(d, cx, cy - 36, 50, (60, 110, 90), blink)
+    d.polygon([(cx, cy - 16), (cx - 7, cy + 18), (cx + 7, cy + 18)], fill=(238, 196, 168))
+    _mouth3d(d, cx, cy + 54, a, 54, (196, 40, 70))
+    return img
+
+
+def draw_robot3d(a, blink=1.0):
+    img = Image.new("RGB", (W, H), (246, 249, 253))
+    d = ImageDraw.Draw(img)
+    cx, cy, r = W // 2, H // 2 + 12, 112
+    _radial(img, [cx - 120, cy + r - 40, cx + 120, cy + r + 150], (120, 150, 190), (40, 60, 96), -0.2, -0.5, "rect", 30)
+    d.line([cx, cy - r - 34, cx, cy - r - 6], fill=(150, 160, 180), width=7)
+    d.ellipse([cx - 12, cy - r - 54, cx + 12, cy - r - 30], fill=(80, 220, 255))
+    d.ellipse([cx - 20, cy - r - 62, cx + 20, cy - r - 22], outline=(80, 220, 255), width=2)
+    for sx in (-1, 1):
+        _radial(img, [cx + sx * (r - 4) - 12, cy - 22, cx + sx * (r - 4) + 12, cy + 34], (200, 214, 232), (120, 138, 164), -0.2, -0.3)
+    _radial(img, [cx - r, cy - r, cx + r, cy + r], (238, 244, 252), (150, 166, 190), -0.26, -0.34)
+    for sx in (-1, 1):
+        d.ellipse([cx + sx * 46 - 26, cy - 58, cx + sx * 46 + 26, cy - 6], fill=(18, 28, 46))
+        if blink > 0.2:
+            d.ellipse([cx + sx * 46 - 16, cy - 48, cx + sx * 46 + 16, cy - 16], fill=(80, 220, 255))
+            d.ellipse([cx + sx * 46 - 10, cy - 44, cx + sx * 46 + 10, cy - 20], fill=(200, 250, 255))
+        else:
+            d.line([cx + sx * 46 - 22, cy - 32, cx + sx * 46 + 22, cy - 32], fill=(80, 220, 255), width=5)
+    d.rounded_rectangle([cx - 44, cy + 44, cx + 44, cy + 76], 12, fill=(18, 28, 46))
+    mh = int(6 + 22 * a)
+    d.rounded_rectangle([cx - 34, cy + 48, cx + 34, cy + 48 + mh], radius=min(mh / 2, 12), fill=(80, 220, 255))
+    return img
 
 
 def _eye(d, x, y, r, look=3, robot=False):
@@ -66,8 +172,15 @@ def draw_bonya(a, blink=1.0):
 
 def draw_char(idx, a, blink=1.0):
     c = CHARS[idx % len(CHARS)]
-    if c.get("style") == "bonya":
+    st = c.get("style")
+    if st == "bonya":
         return draw_bonya(a, blink)
+    if st == "man3d":
+        return draw_man(a, blink)
+    if st == "woman3d":
+        return draw_woman(a, blink)
+    if st == "robot3d":
+        return draw_robot3d(a, blink)
     img = Image.new("RGB", (W, H), (246, 249, 253))
     d = ImageDraw.Draw(img)
     cx, cy, r = W // 2, H // 2 + 12, 116
